@@ -32,6 +32,23 @@
     return '<div class="haiku">🦅<br>' + h.map(esc).join("<br>") + "</div>";
   }
 
+  // a rotating, slightly-unhinged hello (n is already escaped)
+  var GREETINGS = [
+    function (n) { return "Well well, if it isn't " + n + " 👀"; },
+    function (n) { return "What's crackin', " + n + "? 🌰"; },
+    function (n) { return "Ayyy " + n + "! The icon has arrived ✨"; },
+    function (n) { return "Look who it is — " + n + "! 🎉"; },
+    function (n) { return "Howdy " + n + "! War Eagle 🦅"; },
+    function (n) { return "Nuts to see you, " + n + "! 🐿️🌰"; },
+    function (n) { return "Oh hey " + n + " — fancy seeing you here 💅"; },
+    function (n) { return "There she is! " + n + " the Great 👑"; },
+    function (n) { return "Sup, " + n + "! Squirrel squad reporting 🐿️"; },
+    function (n) { return "Welcome back, legend " + n + " 🌹"; },
+  ];
+  function funGreeting(escName) {
+    return GREETINGS[Math.floor(Math.random() * GREETINGS.length)](escName);
+  }
+
   // ---- persistent client keys ----
   var K_PW = "ss_pw";
   var K_ME = "ss_me";
@@ -392,7 +409,7 @@
 
     return '<div class="card you ' + (overdue ? "overdue" : "") + '" id="youCard">' +
       '<div class="youtop"><div class="avatar bigavatar mascot">' + esc(me.emoji || "🐿️") + "</div>" +
-      "<div><h2>Hi " + esc(me.name) + "!</h2>" +
+      "<div><h2>" + funGreeting(esc(me.name)) + "</h2>" +
       '<div class="tiny">' + (paidUp ? "You're all squared away 💚" : "Here's what you owe") + "</div></div>" +
       '<button class="iconbtn" style="background:var(--buff);color:var(--ink)" data-act="editprofile">✏️</button></div>' +
       '<div class="balance ' + (paidUp ? "zero" : "due") + '">' + money(bal) + "</div>" +
@@ -680,13 +697,19 @@
             participantIds: participantIds,
           },
         });
-        if (billPhotoDataUrl && res && res.id) {
-          var me = personById(localStorage.getItem(K_ME)) || {};
-          await api("addReceipt", { chargeId: res.id, dataUrl: billPhotoDataUrl, uploadedBy: me.name || "" });
-        }
+        // the bill is saved — show it right away, even if a photo upload later fails
         closeSheet();
         await refresh();
         toast("Bill added ✅");
+        if (billPhotoDataUrl && res && res.id) {
+          try {
+            var me = personById(localStorage.getItem(K_ME)) || {};
+            await api("addReceipt", { chargeId: res.id, dataUrl: billPhotoDataUrl, uploadedBy: me.name || "" });
+            await refresh();
+          } catch (pe) {
+            toast("Bill saved — but the photo didn't upload: " + (pe.message || pe), true);
+          }
+        }
       } catch (err) {
         btn.disabled = false; btn.textContent = "Save & split 🌰";
         handleActionError(err);

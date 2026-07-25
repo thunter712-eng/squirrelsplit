@@ -102,6 +102,19 @@
     return "https://venmo.com/" + encodeURIComponent(username) +
       "?txn=pay&amount=" + amount.toFixed(2) + "&note=" + encodeURIComponent(note);
   }
+  function venmoProfileLink(username) {
+    return "https://venmo.com/u/" + encodeURIComponent(username);
+  }
+  // "verify recipient(s)" line shown under Pay buttons
+  function verifyLineHTML(targets) {
+    var t = (targets || payTargets()).filter(function (a) { return a.venmoUsername; });
+    if (!t.length) return "";
+    return '<div class="verifyline">Paying the right person? ' +
+      t.map(function (a) {
+        return '<a href="' + esc(venmoProfileLink(a.venmoUsername)) +
+          '" target="_blank" rel="noopener">✓ check @' + esc(a.venmoUsername) + " ↗</a>";
+      }).join(" · ") + "</div>";
+  }
   function nudgeLink(person) {
     var amt = balanceOf(person.id);
     var admin = payTargets()[0];
@@ -239,6 +252,7 @@
       (overdue ? '<div class="overdue-banner">🐿️💧 aww, a little past due — no worries, just tap pay!</div>' : "") +
       (chargeRows ? "<div>" + chargeRows + "</div>" : "") +
       (paidUp ? "" : '<div class="btnrow" style="flex-direction:column">' + pay + "</div>") +
+      (paidUp ? "" : verifyLineHTML()) +
       (paidUp ? "" : '<button class="btn primary" style="margin-top:10px" data-act="ipaid" data-id="' + me.id + '">🎉 I paid it — mark me square</button>') +
       "</div>";
   }
@@ -247,7 +261,8 @@
     var bal = balanceOf(kid.id);
     var paidUp = bal <= 0.004;
     var note = "AGD house (" + kid.name + ") 🐿️";
-    var pay = payTargets().filter(function (a) { return a.id !== parent.id; }).map(function (a, i) {
+    var payees = payTargets().filter(function (a) { return a.id !== parent.id; });
+    var pay = payees.map(function (a, i) {
       return '<a class="btn ' + (i === 0 ? "venmo" : "ghost") + '" href="' +
         esc(venmoLink(a.venmoUsername, bal, note)) + '" target="_blank" rel="noopener">💸 Pay ' +
         esc(a.name) + " @" + esc(a.venmoUsername) + "</a>";
@@ -260,6 +275,7 @@
       (paidUp ? '<div class="caption">All paid up — thank you! 💚</div>' + randomHaikuHTML()
         : '<div class="caption">Owed for this month</div>' +
           '<div class="btnrow" style="flex-direction:column">' + pay + "</div>" +
+          verifyLineHTML(payees) +
           '<button class="btn ghost sm" style="width:100%;margin-top:10px" data-act="ipaid" data-id="' + kid.id + '">Mark ' + esc(kid.name) + " paid</button>") +
       "</div>";
   }
@@ -316,7 +332,10 @@
       "</select></div>" +
       '<div class="field" id="linkWrap" style="' + (p.role === "parent" ? "" : "display:none") + '">' +
         '<label>Whose parent? (their daughter)</label><select name="linkedRoommateId"><option value="">—</option>' + rmOptions + "</select></div>" +
-      '<div class="field"><label>Venmo username (without @)</label><input name="venmoUsername" value="' + esc(p.venmoUsername || "") + '" placeholder="e.g. ellie-hunter"></div>' +
+      '<div class="field"><label>Venmo username (without @)</label>' +
+        '<input name="venmoUsername" value="' + esc(p.venmoUsername || "") + '" placeholder="e.g. ellie-hunter" autocapitalize="none" autocorrect="off" spellcheck="false">' +
+        '<a class="verify-venmo" id="verifyVenmo" target="_blank" rel="noopener" style="display:none"></a>' +
+        '<div class="tiny" style="margin-top:4px">Tip: open the profile to make sure it\'s the right person before anyone pays.</div></div>' +
       '<div class="field"><label>Phone (for nudges)</label><input name="phone" type="tel" value="' + esc(p.phone || "") + '" placeholder="+1 334 555 0123"></div>' +
       '<div class="field"><label>Email (for reminders)</label><input name="email" type="email" value="' + esc(p.email || "") + '"></div>' +
       '<div class="field"><label>Pick an avatar</label>' + emojiGridHTML(p.emoji || "🐿️") + '<input type="hidden" name="emoji" value="' + esc(p.emoji || "🐿️") + '"></div>' +
@@ -342,6 +361,20 @@
     form.role.addEventListener("change", function () {
       $("#linkWrap").style.display = form.role.value === "parent" ? "" : "none";
     });
+    // live "check this Venmo profile" link that follows what they type
+    function updateVenmoVerify() {
+      var v = form.venmoUsername.value.trim().replace(/^@/, "");
+      var a = $("#verifyVenmo");
+      if (v) {
+        a.href = venmoProfileLink(v);
+        a.textContent = "✓ Open @" + v + "'s Venmo profile ↗";
+        a.style.display = "inline-block";
+      } else {
+        a.style.display = "none";
+      }
+    }
+    form.venmoUsername.addEventListener("input", updateVenmoVerify);
+    updateVenmoVerify();
     form.addEventListener("submit", async function (e) {
       e.preventDefault();
       var person = {

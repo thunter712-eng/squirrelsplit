@@ -201,6 +201,13 @@ input, select { font-family: inherit; font-size: 16px; } /* 16px stops iOS zoom 
 .fab:active { transform: scale(.95); }
 .tiny { font-size: 12px; color: var(--muted); }
 .linkbtn { background: none; border: 0; color: var(--red); font-weight: 700; text-decoration: underline; padding: 6px; }
+.verify-venmo {
+  display: inline-block; margin-top: 8px; color: #008CFF; font-weight: 700;
+  font-size: 13px; text-decoration: none;
+}
+.verify-venmo:active { opacity: .6; }
+.verifyline { text-align: center; font-size: 12px; color: var(--muted); margin-top: 10px; }
+.verifyline a { color: #008CFF; font-weight: 700; text-decoration: none; white-space: nowrap; }
 
 /* ---------- animations ---------- */
 @keyframes bob { 0%,100%{ transform: translateY(0) } 50%{ transform: translateY(-10px) } }

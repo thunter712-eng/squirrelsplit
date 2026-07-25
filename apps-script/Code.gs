@@ -50,7 +50,7 @@ function setup() {
   });
 
   writeConfig({
-    password: INITIAL_PASSWORD, houseName: "AGD House", reminderDay: 1, overdueDays: 10,
+    password: INITIAL_PASSWORD, adminPin: "", houseName: "AGD House", reminderDay: 1, overdueDays: 10,
     rentUtilityId: rentId, rentDueDay: 1, rentPortalUrl: DEFAULT_RENT_PORTAL, rentInstructions: DEFAULT_RENT_STEPS,
   });
   SpreadsheetApp.getActive().toast("SquirrelSplit setup complete ✅");
@@ -106,17 +106,21 @@ function handle(body) {
     if (String(body.password) !== String(cfg.password)) throw new Error("Wrong password");
 
     switch (body.action) {
+      // open to anyone with the house password:
       case "getState":     return json({ ok: true, state: getState() });
-      case "upsertPerson": upsert("People", body.person); return ok();
-      case "deletePerson": remove("People", body.id); return ok();
-      case "addUtility":   appendRow("Utilities", body.utility); return ok();
-      case "deleteUtility":remove("Utilities", body.id); return ok();
-      case "addCharge":    addCharge(body.charge); return ok();
-      case "deleteCharge": deleteCharge(body.chargeId); return ok();
+      case "checkAdminPin":return json({ ok: !cfg.adminPin || String(body.pin) === String(cfg.adminPin) });
+      case "updateSelf":   updateSelf(body.person); return ok();
       case "markPaid":     markPaid(body.personId, body.scope); return ok();
       case "addReceipt":   return json({ ok: true, receipt: addReceipt(body) });
       case "deleteReceipt":deleteReceipt(body.id); return ok();
-      case "updateConfig": writeConfig(body.config); return ok();
+      // admin-only (require the admin PIN, enforced server-side):
+      case "upsertPerson": requireAdmin(cfg, body); upsert("People", body.person); return ok();
+      case "deletePerson": requireAdmin(cfg, body); remove("People", body.id); return ok();
+      case "addUtility":   requireAdmin(cfg, body); appendRow("Utilities", body.utility); return ok();
+      case "deleteUtility":requireAdmin(cfg, body); remove("Utilities", body.id); return ok();
+      case "addCharge":    requireAdmin(cfg, body); addCharge(body.charge); return ok();
+      case "deleteCharge": requireAdmin(cfg, body); deleteCharge(body.chargeId); return ok();
+      case "updateConfig": requireAdmin(cfg, body); writeConfig(body.config); return ok();
       default: throw new Error("Unknown action: " + body.action);
     }
   } catch (err) {
@@ -125,10 +129,38 @@ function handle(body) {
 }
 
 /* ---------------- domain logic ---------------- */
+// Only admins (who know the admin PIN) may make structural changes.
+function requireAdmin(cfg, body) {
+  if (cfg.adminPin && String(body.adminPin) !== String(cfg.adminPin)) {
+    throw new Error("Admin PIN required");
+  }
+}
+
+// Config sent to browsers must NOT include secrets (password, admin PIN, folder id).
+function safeConfig(cfg) {
+  var out = {};
+  Object.keys(cfg).forEach(function (k) {
+    if (k !== "password" && k !== "adminPin" && k !== "receiptsFolderId") out[k] = cfg[k];
+  });
+  out.adminPinSet = !!(cfg.adminPin && String(cfg.adminPin).length);
+  return out;
+}
+
+// A person may edit only their OWN safe fields (no role/rent/admin changes).
+function updateSelf(person) {
+  var people = readObjects("People");
+  var i = people.findIndex(function (x) { return String(x.id) === String(person.id); });
+  if (i < 0) throw new Error("No such person");
+  ["name", "emoji", "venmoUsername", "phone", "email"].forEach(function (k) {
+    if (person[k] != null) people[i][k] = person[k];
+  });
+  overwrite("People", people);
+}
+
 function getState() {
   ensureRentForMonth(); // auto-create/reconcile this month's rent before returning
   return {
-    config: readConfig(),
+    config: safeConfig(readConfig()),
     people: readObjects("People"),
     utilities: readObjects("Utilities"),
     charges: readObjects("Charges"),

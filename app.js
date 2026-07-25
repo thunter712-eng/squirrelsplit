@@ -35,9 +35,15 @@
   // ---- persistent client keys ----
   var K_PW = "ss_pw";
   var K_ME = "ss_me";
+  var K_ADMIN = "ss_adminpin"; // admin PIN saved on this device once unlocked
 
   var STATE = null;   // {config, people, utilities, charges, shares}
   var PW = localStorage.getItem(K_PW) || "";
+  function adminPin() { return localStorage.getItem(K_ADMIN) || ""; }
+  // an admin is "unlocked" on this device if no PIN is configured yet, or they've entered it
+  function adminOK(person) {
+    return !!(person && person.isAdmin && (!STATE.config.adminPinSet || adminPin()));
+  }
 
   // ---------- tiny helpers ----------
   var $ = function (s, r) { return (r || document).querySelector(s); };
@@ -57,12 +63,12 @@
   // ---------- API ----------
   async function api(action, payload) {
     payload = payload || {};
-    if (DEMO) return demoApi(action, payload);
+    if (DEMO) return demoApi(action, Object.assign({ password: PW, adminPin: adminPin() }, payload));
     var res = await fetch(API_URL, {
       method: "POST",
       // text/plain keeps it a "simple" request (no CORS preflight the endpoint can't answer)
       headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify(Object.assign({ action: action, password: PW }, payload)),
+      body: JSON.stringify(Object.assign({ action: action, password: PW, adminPin: adminPin() }, payload)),
     });
     var data = await res.json();
     if (!data.ok) throw new Error(data.error || "Something went wrong");
@@ -195,7 +201,7 @@
     if (STATE.people.length === 0) return renderBootstrap();
     var me = personById(localStorage.getItem(K_ME));
     if (!me) return renderWhoAreYou();
-    $("#settingsBtn").classList.toggle("hidden", !me.isAdmin);
+    $("#settingsBtn").classList.toggle("hidden", !adminOK(me));
     renderDashboard(me);
   }
 
@@ -256,7 +262,17 @@
       if (kid) html += spotlightHTML(me, kid);
     }
 
-    if (me.isAdmin) html += adminToolbarHTML();
+    var isAdmin = adminOK(me);
+    if (isAdmin) html += adminToolbarHTML();
+    // admin who hasn't entered the PIN on this device yet
+    if (me.isAdmin && !isAdmin) {
+      html += '<button class="btn ghost" style="margin-top:12px" data-act="unlockadmin">🔒 Unlock admin tools</button>';
+    }
+    // nudge to set a PIN if none exists yet (so admin isn't wide open)
+    if (isAdmin && !STATE.config.adminPinSet) {
+      html += '<div class="overdue-banner" style="margin-top:12px;cursor:pointer" data-act="settings">' +
+        "⚠️ Anyone can currently act as admin. Tap to set an admin PIN so only you &amp; your wife can make changes.</div>";
+    }
 
     // house list
     html += '<div class="section-title">The house 🏡</div><div class="card">';
@@ -280,14 +296,14 @@
             '<span class="nm">' + esc(u.name) + '<div class="tiny">' + esc(c.dateAdded) +
             " · " + split + (c.note ? " · " + esc(c.note) : "") + "</div></span>" +
             '<span class="amt">' + money(c.totalAmount) + "</span>" +
-            (me.isAdmin ? ' <button class="linkbtn" data-act="delcharge" data-id="' + c.id + '">✕</button>' : "") +
-            "</div>" + receiptsHTML(c.id, me.isAdmin) + "</div>";
+            (isAdmin ? ' <button class="linkbtn" data-act="delcharge" data-id="' + c.id + '">✕</button>' : "") +
+            "</div>" + receiptsHTML(c.id, isAdmin) + "</div>";
         }).join("");
       html += "</div>";
     }
 
     main.innerHTML = html;
-    if (me.isAdmin) {
+    if (isAdmin) {
       main.insertAdjacentHTML("beforeend",
         '<button class="fab" data-act="addbill">➕ Add a bill</button>');
     }
@@ -392,9 +408,33 @@
       "<div>" + statusPill(p.id) + "</div></div>" +
       (balanceOf(p.id) > 0.004 && p.phone
         ? '<a class="btn nudge sm" href="' + esc(nudgeLink(p)) + '">🔔 Nudge</a>' : "") +
-      (me.isAdmin && balanceOf(p.id) > 0.004
+      (adminOK(me) && balanceOf(p.id) > 0.004
         ? ' <button class="linkbtn" data-act="markpaid" data-id="' + p.id + '">mark paid</button>' : "") +
       "</div>";
+  }
+
+  // prompt for the admin PIN; on success, save it on this device (and optionally set who "me" is)
+  function openAdminUnlock(pendingId) {
+    openSheet('<h3>🔒 Admin access</h3>' +
+      '<p class="tiny" style="margin:-6px 0 12px">Only admins (you &amp; your wife) can make changes. Enter the admin PIN to continue.</p>' +
+      '<form id="pinForm"><div class="field">' +
+      '<input name="pin" type="password" inputmode="numeric" autocomplete="off" placeholder="Admin PIN"></div>' +
+      '<div class="err" id="pinErr"></div>' +
+      '<button class="btn primary" type="submit">Unlock</button></form>');
+    var inp = $("#pinForm").pin; if (inp) inp.focus();
+    $("#pinForm").addEventListener("submit", async function (e) {
+      e.preventDefault();
+      var pin = this.pin.value;
+      try {
+        var r = await api("checkAdminPin", { pin: pin });
+        if (!r.ok) throw new Error("no");
+        localStorage.setItem(K_ADMIN, pin);
+        if (pendingId) localStorage.setItem(K_ME, pendingId);
+        closeSheet(); render();
+      } catch (err) {
+        $("#pinErr").textContent = "That PIN didn't work 🐿️";
+      }
+    });
   }
 
   function adminToolbarHTML() {
@@ -423,38 +463,46 @@
     }).join("") + "</div>";
   }
 
-  function personFormHTML(p, isBootstrap) {
+  function personFormHTML(p, isBootstrap, selfMode) {
     p = p || {};
     var rmOptions = roommates().map(function (r) {
       return '<option value="' + r.id + '"' + (p.linkedRoommateId === r.id ? " selected" : "") + ">" + esc(r.name) + "</option>";
     }).join("");
-    return '<form id="personForm">' +
-      '<div class="field"><label>Name</label><input name="name" value="' + esc(p.name || "") + '" required></div>' +
+    var adminFields = selfMode ? "" : (
       '<div class="field"><label>They are a…</label><select name="role">' +
         '<option value="roommate"' + (p.role === "roommate" ? " selected" : "") + ">🐿️ Roommate (in the split)</option>" +
         '<option value="parent"' + (p.role === "parent" ? " selected" : "") + ">Parent (pays, not split)</option>" +
       "</select></div>" +
       '<div class="field" id="linkWrap" style="' + (p.role === "parent" ? "" : "display:none") + '">' +
-        '<label>Whose parent? (their daughter)</label><select name="linkedRoommateId"><option value="">—</option>' + rmOptions + "</select></div>" +
+        '<label>Whose parent? (their daughter)</label><select name="linkedRoommateId"><option value="">—</option>' + rmOptions + "</select></div>");
+    var rentField = selfMode ? "" : (
+      '<div class="field" id="rentWrap" style="' + (p.role === "roommate" || p.role == null ? "" : "display:none") + '">' +
+        '<label>Monthly rent for this person ($)</label>' +
+        '<input name="rentAmount" type="number" step="0.01" inputmode="decimal" value="' + (Number(p.rentAmount) > 0 ? Number(p.rentAmount) : "") + '" placeholder="e.g. 650">' +
+        '<div class="tiny" style="margin-top:4px">Set each roommate\'s own rent (Mia\'s is higher for her private room). Rent auto-appears each month and is paid at the 221 Armstrong portal — leave blank for $0.</div></div>');
+    var adminCheck = selfMode ? "" : (
+      '<label class="checkrow"><input type="checkbox" name="isAdmin"' + (p.isAdmin ? " checked" : "") + "> Admin (can add bills &amp; people)</label>");
+    var delBtn = (selfMode || isBootstrap || !p.id) ? "" : (
+      '<button class="btn ghost sm" type="button" data-act="delperson" data-id="' + p.id + '" style="width:100%;margin-top:8px">Delete this person</button>');
+    return '<form id="personForm">' +
+      '<div class="field"><label>Name</label><input name="name" value="' + esc(p.name || "") + '" required></div>' +
+      adminFields +
       '<div class="field"><label>Venmo username (without @)</label>' +
         '<input name="venmoUsername" value="' + esc(p.venmoUsername || "") + '" placeholder="e.g. ellie-hunter" autocapitalize="none" autocorrect="off" spellcheck="false">' +
         '<a class="verify-venmo" id="verifyVenmo" target="_blank" rel="noopener" style="display:none"></a>' +
         '<div class="tiny" style="margin-top:4px">Tip: open the profile to make sure it\'s the right person before anyone pays.</div></div>' +
-      '<div class="field" id="rentWrap" style="' + (p.role === "roommate" || p.role == null ? "" : "display:none") + '">' +
-        '<label>Monthly rent for this person ($)</label>' +
-        '<input name="rentAmount" type="number" step="0.01" inputmode="decimal" value="' + (Number(p.rentAmount) > 0 ? Number(p.rentAmount) : "") + '" placeholder="e.g. 650">' +
-        '<div class="tiny" style="margin-top:4px">Set each roommate\'s own rent (Mia\'s is higher for her private room). Rent auto-appears each month and is paid at the 221 Armstrong portal — leave blank for $0.</div></div>' +
+      rentField +
       '<div class="field"><label>Phone (for nudges)</label><input name="phone" type="tel" value="' + esc(p.phone || "") + '" placeholder="+1 334 555 0123"></div>' +
       '<div class="field"><label>Email (for reminders)</label><input name="email" type="email" value="' + esc(p.email || "") + '"></div>' +
       '<div class="field"><label>Pick an avatar</label>' + emojiGridHTML(p.emoji || "🐿️") + '<input type="hidden" name="emoji" value="' + esc(p.emoji || "🐿️") + '"></div>' +
-      '<label class="checkrow"><input type="checkbox" name="isAdmin"' + (p.isAdmin ? " checked" : "") + "> Admin (can add bills &amp; people)</label>" +
+      adminCheck +
       '<input type="hidden" name="id" value="' + esc(p.id || "") + '">' +
       '<button class="btn primary" type="submit" style="margin-top:14px">' + (isBootstrap ? "Create house 🌰" : "Save") + "</button>" +
-      (p.id && !isBootstrap ? '<button class="btn ghost sm" type="button" data-act="delperson" data-id="' + p.id + '" style="width:100%;margin-top:8px">Delete this person</button>' : "") +
+      delBtn +
       "</form>";
   }
 
-  function wirePersonForm(isBootstrap) {
+  function wirePersonForm(isBootstrap, selfMode) {
     var form = $("#personForm");
     if (!form) return;
     form.addEventListener("click", function (e) {
@@ -466,10 +514,12 @@
         form.emoji.value = b.getAttribute("data-emo");
       }
     });
-    form.role.addEventListener("change", function () {
-      $("#linkWrap").style.display = form.role.value === "parent" ? "" : "none";
-      $("#rentWrap").style.display = form.role.value === "roommate" ? "" : "none";
-    });
+    if (form.role) {
+      form.role.addEventListener("change", function () {
+        $("#linkWrap").style.display = form.role.value === "parent" ? "" : "none";
+        $("#rentWrap").style.display = form.role.value === "roommate" ? "" : "none";
+      });
+    }
     // live "check this Venmo profile" link that follows what they type
     function updateVenmoVerify() {
       var v = form.venmoUsername.value.trim().replace(/^@/, "");
@@ -486,6 +536,19 @@
     updateVenmoVerify();
     form.addEventListener("submit", async function (e) {
       e.preventDefault();
+      if (!form.name.value.trim()) return;
+      if (selfMode) {
+        // a person editing only their own safe fields — no admin PIN needed
+        await api("updateSelf", { person: {
+          id: form.id.value,
+          name: form.name.value.trim(),
+          venmoUsername: form.venmoUsername.value.trim().replace(/^@/, ""),
+          phone: form.phone.value.trim(),
+          email: form.email.value.trim(),
+          emoji: form.emoji.value,
+        }});
+        closeSheet(); await refresh(); return;
+      }
       var person = {
         id: form.id.value || uid(),
         name: form.name.value.trim(),
@@ -498,7 +561,6 @@
         isAdmin: form.isAdmin.checked,
         rentAmount: (form.role.value === "roommate" ? (parseFloat(form.rentAmount.value) || 0) : 0),
       };
-      if (!person.name) return;
       await api("upsertPerson", { person: person });
       if (isBootstrap) localStorage.setItem(K_ME, person.id);
       closeSheet();
@@ -518,9 +580,10 @@
       '<button class="btn primary" data-act="addperson" style="margin-top:14px">➕ Add a person</button>');
   }
 
-  function openPersonEditor(p, isBootstrap) {
-    openSheet("<h3>" + (p && p.id ? "Edit " + esc(p.name) : "Add a person") + "</h3>" + personFormHTML(p || {}, false));
-    wirePersonForm(isBootstrap);
+  function openPersonEditor(p, isBootstrap, selfMode) {
+    var title = selfMode ? "Edit your profile ✏️" : (p && p.id ? "Edit " + esc(p.name) : "Add a person");
+    openSheet("<h3>" + title + "</h3>" + personFormHTML(p || {}, false, selfMode));
+    wirePersonForm(isBootstrap, selfMode);
   }
 
   function openBillSheet() {
@@ -607,19 +670,28 @@
       '<div class="tiny" style="margin:-6px 4px 12px">Rent auto-appears each month; it becomes "overdue" after this day. Set each person\'s rent amount in 👥 People.</div>' +
       '<div class="field"><label>Rent payment portal URL</label><input name="rentPortalUrl" type="url" value="' + esc(c.rentPortalUrl || "") + '"></div>' +
       '<div class="field"><label>How to pay rent (shown in the app)</label><textarea name="rentInstructions" rows="3">' + esc(c.rentInstructions || "") + "</textarea></div>" +
+      '<div class="section-title" style="margin:18px 4px 6px">🔒 Admin lock</div>' +
+      '<div class="field"><label>Admin PIN ' + (c.adminPinSet ? "(set — type to change)" : "(not set yet)") + "</label>" +
+        '<input name="adminPin" type="password" inputmode="numeric" autocomplete="off" placeholder="' + (c.adminPinSet ? "Leave blank to keep current" : "Choose a PIN") + '"></div>' +
+      '<div class="tiny" style="margin:-6px 4px 12px">Only people who know this PIN can act as admin (add/edit people, bills, settings). Share it only with your wife. Everyone else still uses just the house password.</div>' +
       '<button class="btn primary" type="submit">Save settings</button></form>' +
-      '<button class="btn ghost sm" data-act="switch" style="width:100%;margin-top:16px">🔄 Switch to another person</button>' +
+      (c.adminPinSet ? '<button class="btn ghost sm" data-act="lockadmin" style="width:100%;margin-top:16px">🔒 Lock admin on this device</button>' : "") +
+      '<button class="btn ghost sm" data-act="switch" style="width:100%;margin-top:8px">🔄 Switch to another person</button>' +
       '<button class="btn ghost sm" data-act="logout" style="width:100%;margin-top:8px">Log out of this device</button>');
     $("#cfgForm").addEventListener("submit", async function (e) {
       e.preventDefault();
-      await api("updateConfig", { config: {
+      var cfg = {
         houseName: this.houseName.value.trim(),
         reminderDay: parseInt(this.reminderDay.value, 10) || 1,
         overdueDays: parseInt(this.overdueDays.value, 10) || 10,
         rentDueDay: parseInt(this.rentDueDay.value, 10) || 1,
         rentPortalUrl: this.rentPortalUrl.value.trim(),
         rentInstructions: this.rentInstructions.value.trim(),
-      }});
+      };
+      var newPin = this.adminPin.value.trim();
+      if (newPin) cfg.adminPin = newPin; // only change the PIN when a new one is typed
+      await api("updateConfig", { config: cfg });
+      if (newPin) localStorage.setItem(K_ADMIN, newPin); // keep this device unlocked with the new PIN
       closeSheet(); await refresh();
     });
   }
@@ -635,7 +707,18 @@
     if (t.tagName === "A") return;
 
     if (act === "closesheet") { closeSheet(); return; }
-    if (act === "pickme") { localStorage.setItem(K_ME, id); render(); return; }
+    if (act === "pickme") {
+      var who = personById(id);
+      // selecting an admin (you/your wife) requires the admin PIN if one is set
+      if (who && who.isAdmin && STATE.config.adminPinSet && !adminPin()) {
+        openAdminUnlock(id);
+      } else {
+        localStorage.setItem(K_ME, id); render();
+      }
+      return;
+    }
+    if (act === "unlockadmin") { openAdminUnlock(null); return; }
+    if (act === "lockadmin") { localStorage.removeItem(K_ADMIN); closeSheet(); render(); return; }
     if (act === "switch") { localStorage.removeItem(K_ME); closeSheet(); render(); return; }
     if (act === "logout") { localStorage.removeItem(K_PW); localStorage.removeItem(K_ME); location.reload(); return; }
     if (act === "settings") { openSettingsSheet(); return; }
@@ -644,7 +727,7 @@
     if (act === "addbill") { openBillSheet(); return; }
     if (act === "addperson") { openPersonEditor({ role: "roommate", emoji: "🐿️" }); return; }
     if (act === "editperson") { openPersonEditor(personById(id)); return; }
-    if (act === "editprofile") { openPersonEditor(personById(localStorage.getItem(K_ME))); return; }
+    if (act === "editprofile") { openPersonEditor(personById(localStorage.getItem(K_ME)), false, true); return; }
 
     if (act === "ipaid" || act === "paidrent" || act === "markpaid") {
       // ipaid = utilities (Venmo) only, paidrent = rent only, markpaid (admin) = everything
@@ -691,7 +774,7 @@
   }
 
   async function boot() {
-    if (DEMO) $("#gateHint").innerHTML = "🧪 <b>Demo mode</b> — password is <b>squirrel</b>";
+    if (DEMO) $("#gateHint").innerHTML = "🧪 <b>Demo mode</b> — password <b>squirrel</b> · admin PIN <b>1234</b>";
     if (!PW) return; // show gate
     try {
       await refresh();
@@ -744,7 +827,7 @@
 
     var db = {
       config: {
-        password: "squirrel", houseName: "AGD House", reminderDay: 1, overdueDays: 10,
+        password: "squirrel", adminPin: "1234", houseName: "AGD House", reminderDay: 1, overdueDays: 10,
         rentUtilityId: rent.id, rentDueDay: 1,
         rentPortalUrl: "https://two21armstrong.securecafe.com/residentservices/two21-armstrong-apartments-student/userlogin.aspx",
         rentInstructions: "Log in, click Payments at the top of the screen, then select your name. You can also use the \"RentCafe Resident\" app on your phone.",
@@ -803,6 +886,18 @@
     rc.participantIds = wantIds;
   }
 
+  function demoSafeConfig(db) {
+    var out = {};
+    Object.keys(db.config).forEach(function (k) {
+      if (k !== "password" && k !== "adminPin" && k !== "receiptsFolderId") out[k] = db.config[k];
+    });
+    out.adminPinSet = !!(db.config.adminPin && String(db.config.adminPin).length);
+    return out;
+  }
+  function demoRequireAdmin(db, p) {
+    if (db.config.adminPin && String(p.adminPin) !== String(db.config.adminPin)) throw new Error("Admin PIN required");
+  }
+
   async function demoApi(action, p) {
     await new Promise(function (r) { setTimeout(r, 120); }); // feel like a network
     var db = demoDB();
@@ -814,19 +909,31 @@
     switch (action) {
       case "getState":
         demoEnsureRent(db); saveDemo(db);
-        return { ok: true, state: { config: db.config, people: db.people, utilities: db.utilities, charges: db.charges, shares: db.shares, receipts: db.receipts || [] } };
+        return { ok: true, state: { config: demoSafeConfig(db), people: db.people, utilities: db.utilities, charges: db.charges, shares: db.shares, receipts: db.receipts || [] } };
+      case "checkAdminPin":
+        return { ok: !db.config.adminPin || String(p.pin) === String(db.config.adminPin) };
+      case "updateSelf": {
+        var si = db.people.findIndex(function (x) { return x.id === p.person.id; });
+        if (si >= 0) ["name", "emoji", "venmoUsername", "phone", "email"].forEach(function (k) {
+          if (p.person[k] != null) db.people[si][k] = p.person[k];
+        });
+        break;
+      }
       case "upsertPerson": {
+        demoRequireAdmin(db, p);
         var i = db.people.findIndex(function (x) { return x.id === p.person.id; });
         if (i >= 0) db.people[i] = p.person; else db.people.push(p.person);
         break;
       }
       case "deletePerson":
+        demoRequireAdmin(db, p);
         db.people = db.people.filter(function (x) { return x.id !== p.id; });
         break;
-      case "addUtility": db.utilities.push(p.utility); break;
-      case "deleteUtility": db.utilities = db.utilities.filter(function (x) { return x.id !== p.id; }); break;
-      case "addCharge": demoAddCharge(db, p.charge); break;
+      case "addUtility": demoRequireAdmin(db, p); db.utilities.push(p.utility); break;
+      case "deleteUtility": demoRequireAdmin(db, p); db.utilities = db.utilities.filter(function (x) { return x.id !== p.id; }); break;
+      case "addCharge": demoRequireAdmin(db, p); demoAddCharge(db, p.charge); break;
       case "deleteCharge":
+        demoRequireAdmin(db, p);
         db.charges = db.charges.filter(function (x) { return x.id !== p.chargeId; });
         db.shares = db.shares.filter(function (x) { return x.chargeId !== p.chargeId; });
         break;
@@ -841,7 +948,7 @@
         });
         break;
       }
-      case "updateConfig": Object.assign(db.config, p.config); break;
+      case "updateConfig": demoRequireAdmin(db, p); Object.assign(db.config, p.config); break;
       case "addReceipt":
         db.receipts = db.receipts || [];
         db.receipts.push({ id: uid(), chargeId: String(p.chargeId), fileId: "", viewUrl: p.dataUrl, imgUrl: p.dataUrl, uploadedBy: p.uploadedBy || "", uploadedAt: todayISO(), caption: "" });

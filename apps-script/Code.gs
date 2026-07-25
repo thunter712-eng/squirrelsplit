@@ -24,6 +24,7 @@ var TABS = {
   Utilities:["id", "name", "icon"],
   Charges:  ["id", "utilityId", "totalAmount", "dateAdded", "note", "participantIds", "kind", "period", "dueDate"],
   Shares:   ["id", "chargeId", "personId", "amountOwed", "status", "paidDate"],
+  Receipts: ["id", "chargeId", "fileId", "viewUrl", "imgUrl", "uploadedBy", "uploadedAt", "caption"],
 };
 
 var DEFAULT_RENT_PORTAL = "https://two21armstrong.securecafe.com/residentservices/two21-armstrong-apartments-student/userlogin.aspx";
@@ -73,7 +74,8 @@ function migrate() {
   if (!cfg.rentPortalUrl) patch.rentPortalUrl = DEFAULT_RENT_PORTAL;
   if (!cfg.rentInstructions) patch.rentInstructions = DEFAULT_RENT_STEPS;
   if (Object.keys(patch).length) writeConfig(patch);
-  SpreadsheetApp.getActive().toast("Migration complete ✅ — rent fields added");
+  ensureReceiptsFolder(); // touches Drive so this run prompts for the photo-upload permission
+  SpreadsheetApp.getActive().toast("Migration complete ✅ — rent + photo uploads ready");
 }
 
 function createDailyReminderTrigger() {
@@ -112,6 +114,8 @@ function handle(body) {
       case "addCharge":    addCharge(body.charge); return ok();
       case "deleteCharge": deleteCharge(body.chargeId); return ok();
       case "markPaid":     markPaid(body.personId, body.scope); return ok();
+      case "addReceipt":   return json({ ok: true, receipt: addReceipt(body) });
+      case "deleteReceipt":deleteReceipt(body.id); return ok();
       case "updateConfig": writeConfig(body.config); return ok();
       default: throw new Error("Unknown action: " + body.action);
     }
@@ -129,7 +133,45 @@ function getState() {
     utilities: readObjects("Utilities"),
     charges: readObjects("Charges"),
     shares: readObjects("Shares"),
+    receipts: readObjects("Receipts"),
   };
+}
+
+/* ---------------- receipts (bill photos) stored in Google Drive ---------------- */
+function ensureReceiptsFolder() {
+  var cfg = readConfig();
+  if (cfg.receiptsFolderId) {
+    try { return DriveApp.getFolderById(cfg.receiptsFolderId); } catch (e) {}
+  }
+  var f = DriveApp.createFolder("SquirrelSplit Receipts");
+  writeConfig({ receiptsFolderId: f.getId() });
+  return f;
+}
+
+function addReceipt(r) {
+  var m = /^data:(image\/[a-zA-Z]+);base64,(.*)$/.exec(r.dataUrl || "");
+  if (!m) throw new Error("Bad image data");
+  var ext = (m[1].split("/")[1] || "jpg").toLowerCase();
+  var blob = Utilities.newBlob(Utilities.base64Decode(m[2]), m[1], "receipt-" + Date.now() + "." + ext);
+  var file = ensureReceiptsFolder().createFile(blob);
+  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  var id = file.getId();
+  var rec = {
+    id: uid(), chargeId: String(r.chargeId), fileId: id,
+    viewUrl: "https://drive.google.com/file/d/" + id + "/view",
+    imgUrl: "https://drive.google.com/thumbnail?id=" + id + "&sz=w600",
+    uploadedBy: r.uploadedBy || "", uploadedAt: new Date().toISOString().slice(0, 10),
+    caption: r.caption || "",
+  };
+  appendRow("Receipts", rec);
+  return rec;
+}
+
+function deleteReceipt(id) {
+  var recs = readObjects("Receipts");
+  var r = recs.filter(function (x) { return String(x.id) === String(id); })[0];
+  if (r && r.fileId) { try { DriveApp.getFileById(r.fileId).setTrashed(true); } catch (e) {} }
+  overwrite("Receipts", recs.filter(function (x) { return String(x.id) !== String(id); }));
 }
 
 function pad2(n) { return (n < 10 ? "0" : "") + n; }

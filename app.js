@@ -125,6 +125,59 @@
           '" target="_blank" rel="noopener">✓ check @' + esc(a.venmoUsername) + " ↗</a>";
       }).join(" · ") + "</div>";
   }
+  // ---------- receipts (bill photos) ----------
+  function receiptsFor(chargeId) {
+    return (STATE.receipts || []).filter(function (r) { return String(r.chargeId) === String(chargeId); });
+  }
+  function receiptsHTML(chargeId, isAdmin) {
+    var rs = receiptsFor(chargeId);
+    var thumbs = rs.map(function (r) {
+      return '<div class="receipt" data-act="viewreceipt" data-url="' + esc(r.viewUrl || r.imgUrl) + '">' +
+        '<img src="' + esc(r.imgUrl) + '" loading="lazy" alt="receipt">' +
+        (r.uploadedBy ? '<span class="rby">' + esc(r.uploadedBy) + "</span>" : "") +
+        (isAdmin ? '<button class="rmreceipt" data-act="delreceipt" data-id="' + esc(r.id) + '">✕</button>' : "") +
+        "</div>";
+    }).join("");
+    return '<div class="receipts">' + thumbs +
+      '<button class="addphoto" data-act="addphoto" data-id="' + chargeId + '">📸 Add proof</button></div>';
+  }
+  // shrink a chosen image to a data URL so uploads stay small
+  function fileToDataUrl(file, maxDim, quality) {
+    return new Promise(function (resolve, reject) {
+      var img = new Image();
+      var url = URL.createObjectURL(file);
+      img.onload = function () {
+        var scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+        var w = Math.max(1, Math.round(img.width * scale)), h = Math.max(1, Math.round(img.height * scale));
+        var cv = document.createElement("canvas"); cv.width = w; cv.height = h;
+        cv.getContext("2d").drawImage(img, 0, 0, w, h);
+        URL.revokeObjectURL(url);
+        try { resolve(cv.toDataURL("image/jpeg", quality)); } catch (e) { reject(e); }
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error("Could not read that image")); };
+      img.src = url;
+    });
+  }
+  function pickReceipt(chargeId, trigger) {
+    var input = document.createElement("input");
+    input.type = "file"; input.accept = "image/*";
+    input.onchange = async function () {
+      var file = input.files && input.files[0];
+      if (!file) return;
+      if (trigger) { trigger.textContent = "⏳ Uploading…"; trigger.disabled = true; }
+      try {
+        var dataUrl = await fileToDataUrl(file, 1400, 0.7);
+        var me = personById(localStorage.getItem(K_ME)) || {};
+        await api("addReceipt", { chargeId: chargeId, dataUrl: dataUrl, uploadedBy: me.name || "" });
+        await refresh();
+      } catch (e) {
+        alert("Upload failed: " + e.message);
+        if (trigger) { trigger.textContent = "📸 Add proof"; trigger.disabled = false; }
+      }
+    };
+    input.click();
+  }
+
   function nudgeLink(person) {
     var amt = balanceOf(person.id);
     var admin = payTargets()[0];
@@ -158,18 +211,37 @@
     wirePersonForm(true);
   }
 
-  // ---- who are you picker ----
+  // ---- who are you picker (grouped by family: roommate + their parents) ----
+  function pickTile(p, cls) {
+    return '<button class="picktile ' + (cls || "") + '" data-act="pickme" data-id="' + p.id + '">' +
+      '<span class="em">' + esc(p.emoji || "🐿️") + "</span>" +
+      esc(p.name) + '<div class="rl">' + (p.role === "roommate" ? "🐿️ roommate" : "parent") + "</div></button>";
+  }
   function renderWhoAreYou() {
     $("#settingsBtn").classList.add("hidden");
-    var tiles = STATE.people.map(function (p) {
-      return '<button class="picktile" data-act="pickme" data-id="' + p.id + '">' +
-        '<span class="em">' + esc(p.emoji || "🐿️") + "</span>" +
-        esc(p.name) + '<div class="rl">' + (p.role === "roommate" ? "🐿️ roommate" : "parent") + "</div></button>";
+    var claimed = {};
+    var families = roommates().map(function (r) {
+      var parents = STATE.people.filter(function (p) {
+        return p.role === "parent" && String(p.linkedRoommateId) === String(r.id);
+      });
+      parents.forEach(function (p) { claimed[p.id] = 1; });
+      return '<div class="family">' + pickTile(r, "head") +
+        (parents.length
+          ? '<div class="fam-parents"><div class="fam-label">👪 ' + esc(r.name) + "'s parent" + (parents.length > 1 ? "s" : "") + "</div>" +
+            '<div class="picker">' + parents.map(function (p) { return pickTile(p); }).join("") + "</div></div>"
+          : "") +
+        "</div>";
     }).join("");
+    var others = STATE.people.filter(function (p) { return p.role !== "roommate" && !claimed[p.id]; });
+    var othersBlock = others.length
+      ? '<div class="section-title" style="margin-top:16px">Parents &amp; others</div><div class="picker">' +
+        others.map(function (p) { return pickTile(p); }).join("") + "</div>"
+      : "";
     main.innerHTML =
       '<div class="card"><h2>Who are you?</h2>' +
-      '<p class="tiny">Tap your name so we can show your squirrel and your balance.</p>' +
-      '<div class="picker">' + tiles + "</div></div>";
+      '<p class="tiny">Tap your name. Parents are grouped under their daughter.</p>' +
+      (families || '<div class="empty"><div class="em">🐿️</div>No roommates yet.</div>') +
+      othersBlock + "</div>";
   }
 
   // ---- main dashboard ----
@@ -196,19 +268,20 @@
     }
     html += "</div>";
 
-    // recent bills (admins can delete)
+    // recent bills — each can carry photo proof anyone can view
     if (STATE.charges.length) {
-      html += '<div class="section-title">Recent bills</div><div class="card">';
+      html += '<div class="section-title">Recent bills 📸</div><div class="card">';
       html += STATE.charges.slice().sort(function (a, b) { return a.dateAdded < b.dateAdded ? 1 : -1; })
         .slice(0, 12).map(function (c) {
           var u = utilById(c.utilityId);
           var n = STATE.shares.filter(function (s) { return s.chargeId === c.id; }).length;
-          return '<div class="charge"><span class="ic">' + esc(u.icon) + "</span>" +
+          var split = isRentCharge(c) ? "per-person" : "split " + n + " ways";
+          return '<div class="bill"><div class="charge"><span class="ic">' + esc(u.icon) + "</span>" +
             '<span class="nm">' + esc(u.name) + '<div class="tiny">' + esc(c.dateAdded) +
-            " · split " + n + " ways" + (c.note ? " · " + esc(c.note) : "") + "</div></span>" +
+            " · " + split + (c.note ? " · " + esc(c.note) : "") + "</div></span>" +
             '<span class="amt">' + money(c.totalAmount) + "</span>" +
             (me.isAdmin ? ' <button class="linkbtn" data-act="delcharge" data-id="' + c.id + '">✕</button>' : "") +
-            "</div>";
+            "</div>" + receiptsHTML(c.id, me.isAdmin) + "</div>";
         }).join("");
       html += "</div>";
     }
@@ -593,6 +666,12 @@
       await api("deleteUtility", { id: id }); closeSheet(); await refresh(); openUtilsSheet();
       return;
     }
+    if (act === "addphoto") { pickReceipt(id, t); return; }
+    if (act === "viewreceipt") { window.open(t.getAttribute("data-url"), "_blank", "noopener"); return; }
+    if (act === "delreceipt") {
+      if (confirm("Remove this photo?")) { await api("deleteReceipt", { id: id }); await refresh(); }
+      return;
+    }
   });
 
   // top bar buttons
@@ -674,6 +753,7 @@
       people: [mia, maddie, ava, sofia, grace, tim, mom],
       charges: [],
       shares: [],
+      receipts: [],
     };
     var iso = function (d) { var x = new Date(); x.setDate(x.getDate() - d); return x.toISOString().slice(0, 10); };
     demoAddCharge(db, { utilityId: power.id, totalAmount: 115, dateAdded: iso(15), note: "Power", participantIds: [mia, maddie, ava, sofia, grace].map(function (p) { return p.id; }) });
@@ -734,7 +814,7 @@
     switch (action) {
       case "getState":
         demoEnsureRent(db); saveDemo(db);
-        return { ok: true, state: { config: db.config, people: db.people, utilities: db.utilities, charges: db.charges, shares: db.shares } };
+        return { ok: true, state: { config: db.config, people: db.people, utilities: db.utilities, charges: db.charges, shares: db.shares, receipts: db.receipts || [] } };
       case "upsertPerson": {
         var i = db.people.findIndex(function (x) { return x.id === p.person.id; });
         if (i >= 0) db.people[i] = p.person; else db.people.push(p.person);
@@ -762,6 +842,13 @@
         break;
       }
       case "updateConfig": Object.assign(db.config, p.config); break;
+      case "addReceipt":
+        db.receipts = db.receipts || [];
+        db.receipts.push({ id: uid(), chargeId: String(p.chargeId), fileId: "", viewUrl: p.dataUrl, imgUrl: p.dataUrl, uploadedBy: p.uploadedBy || "", uploadedAt: todayISO(), caption: "" });
+        break;
+      case "deleteReceipt":
+        db.receipts = (db.receipts || []).filter(function (x) { return String(x.id) !== String(p.id); });
+        break;
       default: throw new Error("unknown action " + action);
     }
     saveDemo(db);

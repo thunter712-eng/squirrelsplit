@@ -10,5 +10,5 @@
    DEMO password is:  squirrel
    ============================================================ */
 window.SQUIRREL_CONFIG = {
-  apiUrl: "DEMO",
+  apiUrl: "https://script.google.com/macros/s/AKfycbyQSWJnKW46RRRPey8kOpQQz6uwQU2y713G_wqOU76Lxny7WW9gS_WnxMzmtyODYQyX/exec",
 };

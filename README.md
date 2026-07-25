@@ -88,6 +88,30 @@ python3 -m http.server 8765
 
 ---
 
+## 🏠 Rent (special — not Venmo, not split evenly)
+
+Rent works differently from utilities:
+
+- **Per-person amounts:** set each roommate's own rent in **👥 People → Edit** (e.g. Mia's is higher
+  for her private room). Not divided by 5.
+- **Auto-recurring:** rent appears automatically each month — you never hit "Add a bill" for it.
+  Set the **rent due day** in ⚙️ Settings; a person's rent shows "overdue" after that day.
+- **Paid at the 221 Armstrong portal**, not Venmo. The app shows a **Pay rent at 221 Armstrong**
+  button (opens the RentCafe SecureCafe portal) plus the steps: *Log in → Payments → select your name*
+  (or the **RentCafe Resident** app). Portal URL + steps are editable in ⚙️ Settings.
+- Everyone marks their own rent paid with **"I paid rent"** (separate from utilities).
+
+## ⬆️ Updating an existing deployment (run this after a code update)
+
+When the backend code changes (like the rent feature), after pasting the new `Code.gs`:
+
+1. Run **`migrate()`** once (function dropdown → Run). It adds the new columns/settings to your
+   Sheet **without deleting your data**.
+2. **Redeploy:** Deploy → Manage deployments → edit ✏️ → Version: **New version** → Deploy.
+   (The `/exec` URL stays the same — no need to touch `config.js`.)
+
+---
+
 ## 🔧 Notes & FAQ
 
 - **Change the password anytime:** edit the value next to `password` on the **Config** tab of your Sheet.

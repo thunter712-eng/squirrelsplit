@@ -20,11 +20,14 @@ var INITIAL_PASSWORD = "auburn-agd-2026"; // <-- change me before running setup(
 
 var TABS = {
   Config:   ["key", "value"],
-  People:   ["id", "name", "role", "emoji", "venmoUsername", "phone", "email", "linkedRoommateId", "isAdmin"],
+  People:   ["id", "name", "role", "emoji", "venmoUsername", "phone", "email", "linkedRoommateId", "isAdmin", "rentAmount"],
   Utilities:["id", "name", "icon"],
-  Charges:  ["id", "utilityId", "totalAmount", "dateAdded", "note", "participantIds"],
+  Charges:  ["id", "utilityId", "totalAmount", "dateAdded", "note", "participantIds", "kind", "period", "dueDate"],
   Shares:   ["id", "chargeId", "personId", "amountOwed", "status", "paidDate"],
 };
+
+var DEFAULT_RENT_PORTAL = "https://two21armstrong.securecafe.com/residentservices/two21-armstrong-apartments-student/userlogin.aspx";
+var DEFAULT_RENT_STEPS = "Log in, click Payments at the top of the screen, then select your name. You can also use the \"RentCafe Resident\" app on your phone.";
 
 /* ---------------- one-time setup ---------------- */
 function setup() {
@@ -38,12 +41,39 @@ function setup() {
   var def = ss.getSheetByName("Sheet1");
   if (def && ss.getSheets().length > 1) ss.deleteSheet(def);
 
-  writeConfig({ password: INITIAL_PASSWORD, houseName: "AGD House", reminderDay: 1, overdueDays: 10 });
+  var rentId = uid();
+  [[rentId, "Rent", "🏠"]].concat([["Power", "⚡"], ["Internet", "📶"], ["Water/Sewer", "💧"]].map(function (u) {
+    return [uid(), u[0], u[1]];
+  })).forEach(function (u) {
+    appendRow("Utilities", { id: u[0], name: u[1], icon: u[2] });
+  });
 
-  [["Rent", "🏠"], ["Power", "⚡"], ["Internet", "📶"], ["Water/Sewer", "💧"]].forEach(function (u) {
-    appendRow("Utilities", { id: uid(), name: u[0], icon: u[1] });
+  writeConfig({
+    password: INITIAL_PASSWORD, houseName: "AGD House", reminderDay: 1, overdueDays: 10,
+    rentUtilityId: rentId, rentDueDay: 1, rentPortalUrl: DEFAULT_RENT_PORTAL, rentInstructions: DEFAULT_RENT_STEPS,
   });
   SpreadsheetApp.getActive().toast("SquirrelSplit setup complete ✅");
+}
+
+/* Run this once after UPDATING the code, to add new columns/config without wiping data. */
+function migrate() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  Object.keys(TABS).forEach(function (name) {
+    var sh = ss.getSheetByName(name);
+    if (!sh) { sh = ss.insertSheet(name); sh.getRange(1, 1, 1, TABS[name].length).setValues([TABS[name]]).setFontWeight("bold"); sh.setFrozenRows(1); }
+    else { overwrite(name, readObjects(name)); } // rewrites header row to new schema, preserves data
+  });
+  var cfg = readConfig();
+  var patch = {};
+  if (cfg.rentUtilityId == null || cfg.rentUtilityId === "") {
+    var rent = readObjects("Utilities").filter(function (u) { return u.name === "Rent"; })[0];
+    if (rent) patch.rentUtilityId = rent.id;
+  }
+  if (cfg.rentDueDay == null || cfg.rentDueDay === "") patch.rentDueDay = 1;
+  if (!cfg.rentPortalUrl) patch.rentPortalUrl = DEFAULT_RENT_PORTAL;
+  if (!cfg.rentInstructions) patch.rentInstructions = DEFAULT_RENT_STEPS;
+  if (Object.keys(patch).length) writeConfig(patch);
+  SpreadsheetApp.getActive().toast("Migration complete ✅ — rent fields added");
 }
 
 function createDailyReminderTrigger() {
@@ -81,7 +111,7 @@ function handle(body) {
       case "deleteUtility":remove("Utilities", body.id); return ok();
       case "addCharge":    addCharge(body.charge); return ok();
       case "deleteCharge": deleteCharge(body.chargeId); return ok();
-      case "markPaid":     markPaid(body.personId); return ok();
+      case "markPaid":     markPaid(body.personId, body.scope); return ok();
       case "updateConfig": writeConfig(body.config); return ok();
       default: throw new Error("Unknown action: " + body.action);
     }
@@ -92,6 +122,7 @@ function handle(body) {
 
 /* ---------------- domain logic ---------------- */
 function getState() {
+  ensureRentForMonth(); // auto-create/reconcile this month's rent before returning
   return {
     config: readConfig(),
     people: readObjects("People"),
@@ -99,6 +130,61 @@ function getState() {
     charges: readObjects("Charges"),
     shares: readObjects("Shares"),
   };
+}
+
+function pad2(n) { return (n < 10 ? "0" : "") + n; }
+function ymOf(d) { return d.getFullYear() + "-" + pad2(d.getMonth() + 1); }
+
+/* Rent is per-person (each roommate has their own rentAmount), auto-recurring monthly,
+   paid via the RentCafe portal — NOT split evenly and NOT paid by Venmo. */
+function ensureRentForMonth() {
+  var cfg = readConfig();
+  var rentUtilId = String(cfg.rentUtilityId || "");
+  var period = ymOf(new Date());
+  var people = readObjects("People");
+  var renters = people.filter(function (p) { return p.role === "roommate" && Number(p.rentAmount) > 0; });
+  if (!renters.length) return;
+
+  var charges = readObjects("Charges");
+  var shares = readObjects("Shares");
+  var dueDay = Math.min(Math.max(Number(cfg.rentDueDay) || 1, 1), 28);
+  var dueDate = period + "-" + pad2(dueDay);
+
+  var rc = charges.filter(function (c) { return c.kind === "rent" && c.period === period; })[0];
+  var changedC = false, changedS = false;
+  if (!rc) {
+    rc = { id: uid(), utilityId: rentUtilId, totalAmount: 0, dateAdded: period + "-01",
+           note: "Rent " + period, participantIds: [], kind: "rent", period: period, dueDate: dueDate };
+    charges.push(rc); changedC = true;
+  } else if (rc.dueDate !== dueDate) { rc.dueDate = dueDate; changedC = true; }
+
+  var byPerson = {};
+  shares.forEach(function (s) { if (s.chargeId === rc.id) byPerson[s.personId] = s; });
+  var wantIds = renters.map(function (p) { return String(p.id); });
+
+  renters.forEach(function (p) {
+    var s = byPerson[String(p.id)];
+    if (s) {
+      if (s.status === "unpaid" && Number(s.amountOwed) !== Number(p.rentAmount)) { s.amountOwed = Number(p.rentAmount); changedS = true; }
+    } else {
+      shares.push({ id: uid(), chargeId: rc.id, personId: String(p.id), amountOwed: Number(p.rentAmount), status: "unpaid", paidDate: "" });
+      changedS = true;
+    }
+  });
+  // drop UNPAID rent shares for people no longer charged (keep paid ones as history)
+  var newShares = shares.filter(function (s) {
+    if (s.chargeId !== rc.id) return true;
+    if (wantIds.indexOf(String(s.personId)) >= 0) return true;
+    if (s.status === "paid") return true;
+    changedS = true; return false;
+  });
+
+  var total = renters.reduce(function (a, p) { return a + Number(p.rentAmount); }, 0);
+  if (Number(rc.totalAmount) !== total) { rc.totalAmount = total; changedC = true; }
+  if ((rc.participantIds || []).join(",") !== wantIds.join(",")) { rc.participantIds = wantIds; changedC = true; }
+
+  if (changedC) overwrite("Charges", charges);
+  if (changedS) overwrite("Shares", newShares);
 }
 
 function addCharge(charge) {
@@ -120,11 +206,18 @@ function deleteCharge(chargeId) {
   overwrite("Shares", shares);
 }
 
-function markPaid(personId) {
+// scope: "rent" = only rent shares, "venmo" = only non-rent, undefined = all
+function markPaid(personId, scope) {
   var shares = readObjects("Shares");
+  var rentIds = readObjects("Charges").filter(function (c) { return c.kind === "rent"; })
+    .map(function (c) { return String(c.id); });
   var today = new Date().toISOString().slice(0, 10);
   shares.forEach(function (s) {
-    if (s.personId === personId && s.status === "unpaid") { s.status = "paid"; s.paidDate = today; }
+    if (String(s.personId) !== String(personId) || s.status !== "unpaid") return;
+    var isRent = rentIds.indexOf(String(s.chargeId)) >= 0;
+    if (scope === "rent" && !isRent) return;
+    if (scope === "venmo" && isRent) return;
+    s.status = "paid"; s.paidDate = today;
   });
   overwrite("Shares", shares);
 }
@@ -139,36 +232,56 @@ function splitAmount(total, n) {
 function sendMonthlyReminders() {
   var cfg = readConfig();
   var now = new Date();
-  if (now.getDate() !== Number(cfg.reminderDay)) return; // self-gates to the chosen day
+  ensureRentForMonth(); // runs daily so each new month's rent appears even if nobody opens the app
+  if (now.getDate() !== Number(cfg.reminderDay)) return; // self-gates the EMAIL to the chosen day
   var st = getState();
   var admins = st.people.filter(function (p) { return p.isAdmin && p.venmoUsername; });
   var overdueDays = Number(cfg.overdueDays) || 10;
+  var today = now.toISOString().slice(0, 10);
+  var rentIds = {};
+  st.charges.forEach(function (c) { if (c.kind === "rent") rentIds[String(c.id)] = c; });
+
+  function lateTag(c) {
+    if (c.dueDate) return today > c.dueDate ? " <b style='color:#A6192E'>(overdue)</b>" : "";
+    var days = Math.floor((now - new Date(c.dateAdded + "T00:00:00")) / 86400000);
+    return days > overdueDays ? " <b style='color:#A6192E'>(overdue)</b>" : "";
+  }
 
   st.people.filter(function (p) { return p.role === "roommate" && p.email; }).forEach(function (p) {
     var mine = st.shares.filter(function (s) { return s.personId === p.id && s.status === "unpaid"; });
-    var total = mine.reduce(function (a, s) { return a + Number(s.amountOwed); }, 0);
-    if (total <= 0) return;
-    var rows = mine.map(function (s) {
-      var c = byId(st.charges, s.chargeId); var u = byId(st.utilities, c.utilityId) || { name: "Bill", icon: "🧾" };
-      var days = Math.floor((now - new Date(c.dateAdded + "T00:00:00")) / 86400000);
-      var late = days > overdueDays ? " <b style='color:#A6192E'>(overdue)</b>" : "";
-      return "<tr><td>" + u.icon + " " + u.name + late + "</td><td align='right'>$" + Number(s.amountOwed).toFixed(2) + "</td></tr>";
-    }).join("");
-    var pay = admins.map(function (a) {
-      var link = "https://venmo.com/" + encodeURIComponent(a.venmoUsername) +
-        "?txn=pay&amount=" + total.toFixed(2) + "&note=" + encodeURIComponent(cfg.houseName + " 🐿️");
-      return "<a href='" + link + "' style='background:#008CFF;color:#fff;padding:10px 16px;border-radius:10px;text-decoration:none;display:inline-block;margin:4px'>Pay " + a.name + " @" + a.venmoUsername + "</a>";
-    }).join("");
+    var rentTotal = 0, venmoTotal = 0, rentRows = "", venmoRows = "";
+    mine.forEach(function (s) {
+      var c = byId(st.charges, s.chargeId); if (!c) return;
+      var u = byId(st.utilities, c.utilityId) || { name: "Bill", icon: "🧾" };
+      var row = "<tr><td>" + u.icon + " " + u.name + lateTag(c) + "</td><td align='right'>$" + Number(s.amountOwed).toFixed(2) + "</td></tr>";
+      if (rentIds[String(s.chargeId)]) { rentTotal += Number(s.amountOwed); rentRows += row; }
+      else { venmoTotal += Number(s.amountOwed); venmoRows += row; }
+    });
+    if (rentTotal + venmoTotal <= 0) return;
+
+    var utilBlock = venmoTotal > 0 ?
+      "<h3 style='margin:18px 0 4px;color:#A6192E'>Utilities — $" + venmoTotal.toFixed(2) + " (Venmo)</h3>" +
+      "<table style='width:100%;border-collapse:collapse'>" + venmoRows + "</table>" +
+      "<p style='margin:8px 0'>" + admins.map(function (a) {
+        var link = "https://venmo.com/" + encodeURIComponent(a.venmoUsername) +
+          "?txn=pay&amount=" + venmoTotal.toFixed(2) + "&note=" + encodeURIComponent(cfg.houseName + " utilities 🐿️");
+        return "<a href='" + link + "' style='background:#008CFF;color:#fff;padding:10px 16px;border-radius:10px;text-decoration:none;display:inline-block;margin:4px'>Pay " + a.name + " @" + a.venmoUsername + "</a>";
+      }).join("") + "</p>" : "";
+
+    var rentBlock = rentTotal > 0 ?
+      "<h3 style='margin:18px 0 4px;color:#A6192E'>🏠 Rent — $" + rentTotal.toFixed(2) + "</h3>" +
+      "<table style='width:100%;border-collapse:collapse'>" + rentRows + "</table>" +
+      "<p style='margin:8px 0'><a href='" + (cfg.rentPortalUrl || DEFAULT_RENT_PORTAL) +
+      "' style='background:#2E7D51;color:#fff;padding:10px 16px;border-radius:10px;text-decoration:none;display:inline-block'>Pay rent at 221 Armstrong ↗</a></p>" +
+      "<p style='color:#5a5148;font-size:13px'>" + (cfg.rentInstructions || DEFAULT_RENT_STEPS) + "</p>" : "";
+
+    var grand = rentTotal + venmoTotal;
     var html =
       "<div style='font-family:sans-serif;max-width:460px'>" +
-      "<h2 style='color:#A6192E'>🐿️ " + cfg.houseName + " — your share</h2>" +
-      "<p>Hi " + p.name + "! Here's what you owe this month:</p>" +
-      "<table style='width:100%;border-collapse:collapse'>" + rows +
-      "<tr><td style='border-top:2px solid #A6192E;padding-top:6px'><b>Total</b></td>" +
-      "<td align='right' style='border-top:2px solid #A6192E;padding-top:6px'><b>$" + total.toFixed(2) + "</b></td></tr></table>" +
-      "<p style='margin-top:16px'>" + pay + "</p>" +
-      "<p style='color:#8a7f72;font-size:12px'>Alpha Gamma Delta · Auburn 🦅 · sent by SquirrelSplit</p></div>";
-    MailApp.sendEmail({ to: p.email, subject: "🐿️ " + cfg.houseName + ": you owe $" + total.toFixed(2), htmlBody: html });
+      "<h2 style='color:#A6192E'>🐿️ " + cfg.houseName + " — your share this month</h2>" +
+      "<p>Hi " + p.name + "! Here's what's due:</p>" + utilBlock + rentBlock +
+      "<p style='color:#8a7f72;font-size:12px;margin-top:18px'>Alpha Gamma Delta · Auburn 🦅 · sent by SquirrelSplit</p></div>";
+    MailApp.sendEmail({ to: p.email, subject: "🐿️ " + cfg.houseName + ": $" + grand.toFixed(2) + " due this month", htmlBody: html });
   });
 }
 
@@ -188,11 +301,17 @@ function readObjects(name) {
 }
 
 function coerce(name, o) {
-  if (name === "People") o.isAdmin = (o.isAdmin === true || String(o.isAdmin).toLowerCase() === "true");
+  if (name === "People") {
+    o.isAdmin = (o.isAdmin === true || String(o.isAdmin).toLowerCase() === "true");
+    o.rentAmount = Number(o.rentAmount) || 0;
+  }
   if (name === "Charges") {
     o.totalAmount = Number(o.totalAmount) || 0;
     o.participantIds = o.participantIds ? String(o.participantIds).split(",").filter(String) : [];
     o.dateAdded = formatDate(o.dateAdded);
+    o.kind = String(o.kind || "");
+    o.period = String(o.period || "");
+    o.dueDate = o.dueDate ? formatDate(o.dueDate) : "";
   }
   if (name === "Shares") o.amountOwed = Number(o.amountOwed) || 0;
   ["id", "chargeId", "personId", "linkedRoommateId"].forEach(function (k) {

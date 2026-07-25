@@ -411,7 +411,11 @@ function rowFor(name, obj) {
 
 function appendRow(name, obj) {
   if (!obj.id) obj.id = uid();
-  sheet(name).appendRow(rowFor(name, obj));
+  var sh = sheet(name);
+  var row = sh.getLastRow() + 1;
+  var range = sh.getRange(row, 1, 1, headers(name).length);
+  range.setNumberFormat("@"); // store as text so "0306", phone numbers, etc. keep leading chars
+  range.setValues([rowFor(name, obj)]);
 }
 
 function overwrite(name, objects) {
@@ -419,8 +423,9 @@ function overwrite(name, objects) {
   sh.clear();
   sh.getRange(1, 1, 1, headers(name).length).setValues([headers(name)]).setFontWeight("bold");
   if (objects.length) {
-    sh.getRange(2, 1, objects.length, headers(name).length)
-      .setValues(objects.map(function (o) { return rowFor(name, o); }));
+    var range = sh.getRange(2, 1, objects.length, headers(name).length);
+    range.setNumberFormat("@"); // text format preserves leading zeros / numeric-looking strings
+    range.setValues(objects.map(function (o) { return rowFor(name, o); }));
   }
   sh.setFrozenRows(1);
 }

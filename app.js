@@ -63,11 +63,19 @@
     requestAnimationFrame(function () { t.classList.add("show"); });
     setTimeout(function () { t.classList.remove("show"); setTimeout(function () { t.remove(); }, 300); }, 4600);
   }
-  // safety net: never let a failed action fail silently
-  window.addEventListener("unhandledrejection", function (e) {
-    var m = (e.reason && e.reason.message) ? e.reason.message : String(e.reason || "Something went wrong");
+  // central error handler: surfaces failures and self-heals a wrong admin PIN
+  function handleActionError(err) {
+    var m = (err && err.message) ? err.message : String(err || "Something went wrong");
+    if (/admin pin/i.test(m)) {
+      localStorage.removeItem(K_ADMIN); // the stored PIN is wrong — drop it and re-ask
+      toast("🔒 That admin PIN didn't match — please enter it again", true);
+      if (STATE) openAdminUnlock(null);
+      return;
+    }
     toast("⚠️ " + m, true);
-  });
+  }
+  // safety net: never let a failed action fail silently
+  window.addEventListener("unhandledrejection", function (e) { handleActionError(e.reason); });
   function uid() { return "id" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
   function daysBetween(iso) {
     var d = new Date(iso + "T00:00:00");
@@ -681,7 +689,7 @@
         toast("Bill added ✅");
       } catch (err) {
         btn.disabled = false; btn.textContent = "Save & split 🌰";
-        toast("⚠️ Couldn't save: " + (err.message || err), true);
+        handleActionError(err);
       }
     });
   }

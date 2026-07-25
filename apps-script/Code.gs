@@ -118,7 +118,7 @@ function handle(body) {
       case "deletePerson": requireAdmin(cfg, body); remove("People", body.id); return ok();
       case "addUtility":   requireAdmin(cfg, body); appendRow("Utilities", body.utility); return ok();
       case "deleteUtility":requireAdmin(cfg, body); remove("Utilities", body.id); return ok();
-      case "addCharge":    requireAdmin(cfg, body); addCharge(body.charge); return ok();
+      case "addCharge":    requireAdmin(cfg, body); return json({ ok: true, id: addCharge(body.charge) });
       case "deleteCharge": requireAdmin(cfg, body); deleteCharge(body.chargeId); return ok();
       case "updateConfig": requireAdmin(cfg, body); writeConfig(body.config); return ok();
       default: throw new Error("Unknown action: " + body.action);
@@ -272,6 +272,7 @@ function addCharge(charge) {
   parts.forEach(function (pid, i) {
     appendRow("Shares", { id: uid(), chargeId: charge.id, personId: pid, amountOwed: amts[i], status: "unpaid", paidDate: "" });
   });
+  return charge.id;
 }
 
 function deleteCharge(chargeId) {
@@ -365,6 +366,7 @@ function headers(name) { return TABS[name]; }
 
 function readObjects(name) {
   var sh = sheet(name);
+  if (!sh) return []; // tab not created yet (e.g. before migrate) — don't crash
   var values = sh.getDataRange().getValues();
   var hdr = values.shift() || [];
   return values.filter(function (r) { return r.join("") !== ""; }).map(function (r) {

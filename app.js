@@ -54,6 +54,20 @@
   }
   function money(x) { return "$" + (Math.round(x * 100) / 100).toFixed(2); }
   function todayISO() { return new Date().toISOString().slice(0, 10); }
+  // brief on-screen message (so failures are never silent)
+  function toast(msg, isError) {
+    var t = document.createElement("div");
+    t.className = "toast" + (isError ? " err" : "");
+    t.textContent = msg;
+    document.body.appendChild(t);
+    requestAnimationFrame(function () { t.classList.add("show"); });
+    setTimeout(function () { t.classList.remove("show"); setTimeout(function () { t.remove(); }, 300); }, 4600);
+  }
+  // safety net: never let a failed action fail silently
+  window.addEventListener("unhandledrejection", function (e) {
+    var m = (e.reason && e.reason.message) ? e.reason.message : String(e.reason || "Something went wrong");
+    toast("⚠️ " + m, true);
+  });
   function uid() { return "id" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
   function daysBetween(iso) {
     var d = new Date(iso + "T00:00:00");
@@ -135,17 +149,19 @@
   function receiptsFor(chargeId) {
     return (STATE.receipts || []).filter(function (r) { return String(r.chargeId) === String(chargeId); });
   }
+  // everyone can VIEW the bill photo; only admins can add/remove one
   function receiptsHTML(chargeId, isAdmin) {
     var rs = receiptsFor(chargeId);
     var thumbs = rs.map(function (r) {
       return '<div class="receipt" data-act="viewreceipt" data-url="' + esc(r.viewUrl || r.imgUrl) + '">' +
-        '<img src="' + esc(r.imgUrl) + '" loading="lazy" alt="receipt">' +
-        (r.uploadedBy ? '<span class="rby">' + esc(r.uploadedBy) + "</span>" : "") +
+        '<img src="' + esc(r.imgUrl) + '" loading="lazy" alt="bill photo">' +
         (isAdmin ? '<button class="rmreceipt" data-act="delreceipt" data-id="' + esc(r.id) + '">✕</button>' : "") +
         "</div>";
     }).join("");
+    if (!thumbs && !isAdmin) return "";
     return '<div class="receipts">' + thumbs +
-      '<button class="addphoto" data-act="addphoto" data-id="' + chargeId + '">📸 Add proof</button></div>';
+      (isAdmin ? '<button class="addphoto" data-act="addphoto" data-id="' + chargeId + '">📷 ' + (rs.length ? "Add photo" : "Add bill photo") + "</button>" : "") +
+      "</div>";
   }
   // shrink a chosen image to a data URL so uploads stay small
   function fileToDataUrl(file, maxDim, quality) {
@@ -606,10 +622,14 @@
       '<div class="field"><label>Date</label><input name="date" type="date" value="' + todayISO() + '"></div>' +
       '<div class="field"><label>Note (optional)</label><input name="note" placeholder="March power bill"></div>' +
       '<div class="field"><label>Split between (uncheck to exclude)</label>' + rmChecks + "</div>" +
+      '<div class="field"><label>Photo of the bill (optional)</label>' +
+        '<button type="button" class="addphoto" id="billPhotoBtn" style="width:100%">📷 Attach a photo so everyone sees the amount</button>' +
+        '<div class="tiny" id="billPhotoStatus" style="margin-top:6px"></div></div>' +
       '<div class="tiny" id="preview"></div>' +
       '<button class="btn primary" type="submit" style="margin-top:12px">Save & split 🌰</button></form>'
     );
     var form = $("#billForm");
+    var billPhotoDataUrl = null; // set when the admin attaches a photo
     function updatePreview() {
       var amt = parseFloat(form.amount.value) || 0;
       var n = form.querySelectorAll('input[name="pp"]:checked').length;
@@ -621,22 +641,48 @@
       c.classList.add("sel");
       form.utilityId.value = c.getAttribute("data-uid");
     });
+    $("#billPhotoBtn").addEventListener("click", function () {
+      var input = document.createElement("input");
+      input.type = "file"; input.accept = "image/*";
+      input.onchange = async function () {
+        var file = input.files && input.files[0];
+        if (!file) return;
+        try {
+          billPhotoDataUrl = await fileToDataUrl(file, 1400, 0.7);
+          $("#billPhotoStatus").innerHTML = "✅ Photo attached — it'll show on this bill. <b>Tap to change</b>";
+        } catch (err) { toast("⚠️ Couldn't read that image", true); }
+      };
+      input.click();
+    });
     form.addEventListener("input", updatePreview);
     form.addEventListener("submit", async function (e) {
       e.preventDefault();
       var participantIds = Array.prototype.map.call(form.querySelectorAll('input[name="pp"]:checked'), function (x) { return x.value; });
-      if (!participantIds.length) { alert("Pick at least one person to split with."); return; }
-      await api("addCharge", {
-        charge: {
-          utilityId: form.utilityId.value,
-          totalAmount: parseFloat(form.amount.value),
-          dateAdded: form.date.value || todayISO(),
-          note: form.note.value.trim(),
-          participantIds: participantIds,
-        },
-      });
-      closeSheet();
-      await refresh();
+      if (!participantIds.length) { toast("Pick at least one person to split with.", true); return; }
+      if (!(parseFloat(form.amount.value) > 0)) { toast("Enter a bill amount.", true); return; }
+      var btn = form.querySelector('button[type="submit"]');
+      btn.disabled = true; btn.textContent = "Saving…";
+      try {
+        var res = await api("addCharge", {
+          charge: {
+            utilityId: form.utilityId.value,
+            totalAmount: parseFloat(form.amount.value),
+            dateAdded: form.date.value || todayISO(),
+            note: form.note.value.trim(),
+            participantIds: participantIds,
+          },
+        });
+        if (billPhotoDataUrl && res && res.id) {
+          var me = personById(localStorage.getItem(K_ME)) || {};
+          await api("addReceipt", { chargeId: res.id, dataUrl: billPhotoDataUrl, uploadedBy: me.name || "" });
+        }
+        closeSheet();
+        await refresh();
+        toast("Bill added ✅");
+      } catch (err) {
+        btn.disabled = false; btn.textContent = "Save & split 🌰";
+        toast("⚠️ Couldn't save: " + (err.message || err), true);
+      }
     });
   }
 
@@ -858,6 +904,7 @@
     charge.participantIds.forEach(function (pid, i) {
       db.shares.push({ id: uid(), chargeId: charge.id, personId: pid, amountOwed: amts[i], status: "unpaid", paidDate: "" });
     });
+    return charge.id;
   }
   // demo mirror of the server's ensureRentForMonth (create/reconcile this month's per-person rent)
   function demoEnsureRent(db) {
@@ -931,7 +978,7 @@
         break;
       case "addUtility": demoRequireAdmin(db, p); db.utilities.push(p.utility); break;
       case "deleteUtility": demoRequireAdmin(db, p); db.utilities = db.utilities.filter(function (x) { return x.id !== p.id; }); break;
-      case "addCharge": demoRequireAdmin(db, p); demoAddCharge(db, p.charge); break;
+      case "addCharge": { demoRequireAdmin(db, p); var newId = demoAddCharge(db, p.charge); saveDemo(db); return { ok: true, id: newId }; }
       case "deleteCharge":
         demoRequireAdmin(db, p);
         db.charges = db.charges.filter(function (x) { return x.id !== p.chargeId; });

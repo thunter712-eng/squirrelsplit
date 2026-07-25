@@ -1,0 +1,218 @@
+/* ===== SquirrelSplit — Auburn Alpha Gamma Delta expense tracker ===== */
+:root {
+  --red: #A6192E;        /* AGD red */
+  --red-dark: #7E1223;
+  --buff: #F3E9D0;       /* AGD buff */
+  --cream: #FBF6EA;      /* page background */
+  --green: #2E7D51;      /* AGD green */
+  --green-soft: #E4F1E9;
+  --orange: #E86100;     /* Auburn nod */
+  --ink: #2B2320;
+  --muted: #8a7f72;
+  --line: #e7dcc4;
+  --shadow: 0 6px 20px rgba(126, 18, 35, .10);
+  --radius: 20px;
+  --safe: env(safe-area-inset-bottom, 0px);
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background: var(--cream);
+  color: var(--ink);
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior-y: contain;
+}
+.hidden { display: none !important; }
+button { font-family: inherit; cursor: pointer; }
+input, select { font-family: inherit; font-size: 16px; } /* 16px stops iOS zoom */
+
+/* ---------- app shell ---------- */
+.app { max-width: 620px; margin: 0 auto; padding: 0 16px calc(120px + var(--safe)); }
+
+.topbar {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px 16px calc(14px + env(safe-area-inset-top, 0px));
+  margin: 0 -16px 8px;
+  background: linear-gradient(135deg, var(--red), var(--red-dark));
+  color: #fff;
+  box-shadow: var(--shadow);
+}
+.topbar .logo { font-size: 26px; line-height: 1; }
+.topbar h1 { font-size: 18px; margin: 0; font-weight: 800; letter-spacing: .2px; flex: 1; }
+.topbar .iconbtn {
+  background: rgba(255,255,255,.16); border: 0; color: #fff;
+  width: 40px; height: 40px; border-radius: 12px; font-size: 18px;
+  display: grid; place-items: center;
+}
+.topbar .iconbtn:active { transform: scale(.92); }
+
+/* ---------- cards ---------- */
+.card {
+  background: #fff; border: 1px solid var(--line);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+  padding: 18px; margin: 14px 0;
+}
+.card.you {
+  background: linear-gradient(160deg, #fff, var(--buff));
+  border: 2px solid var(--red);
+}
+.card.spotlight { border: 2px solid var(--orange); background: linear-gradient(160deg,#fff,#fff6ec); }
+.section-title {
+  font-size: 13px; text-transform: uppercase; letter-spacing: 1.2px;
+  color: var(--muted); font-weight: 800; margin: 22px 4px 6px;
+}
+
+/* ---------- person row ---------- */
+.person {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 8px; border-bottom: 1px solid var(--line);
+}
+.person:last-child { border-bottom: 0; }
+.avatar {
+  width: 46px; height: 46px; border-radius: 50%; flex: none;
+  display: grid; place-items: center; font-size: 26px;
+  background: var(--buff); border: 2px solid #fff; box-shadow: 0 2px 6px rgba(0,0,0,.08);
+}
+.avatar.mascot { background: var(--green-soft); }
+.person .who { flex: 1; min-width: 0; }
+.person .name { font-weight: 700; font-size: 16px; }
+.person .sub { font-size: 13px; color: var(--muted); }
+.person .amount { font-weight: 800; font-size: 17px; text-align: right; }
+
+/* ---------- status pills ---------- */
+.pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 800;
+}
+.pill.paid { background: var(--green-soft); color: var(--green); }
+.pill.pending { background: #FFF3D6; color: #9a6a00; }
+.pill.overdue { background: #FBE1E1; color: var(--red); }
+
+/* ---------- big money header (You card) ---------- */
+.you .youtop { display: flex; align-items: center; gap: 14px; }
+.you .bigavatar { width: 64px; height: 64px; font-size: 38px; }
+.you h2 { margin: 0; font-size: 20px; }
+.balance { font-size: 40px; font-weight: 900; letter-spacing: -1px; margin: 6px 0 2px; }
+.balance.zero { color: var(--green); }
+.balance.due { color: var(--red); }
+.you .caption { color: var(--muted); font-size: 14px; margin-bottom: 8px; }
+.haiku {
+  font-style: italic; text-align: center; color: var(--green);
+  font-size: 15px; line-height: 1.6; margin: 10px 0 4px; font-weight: 600;
+  animation: pop .5s ease;
+}
+
+/* ---------- buttons ---------- */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  border: 0; border-radius: 14px; padding: 14px 18px; font-size: 16px; font-weight: 800;
+  width: 100%; text-decoration: none; text-align: center;
+}
+.btn:active { transform: scale(.97); }
+.btn.primary { background: var(--red); color: #fff; }
+.btn.venmo { background: #008CFF; color: #fff; }
+.btn.pay { background: var(--green); color: #fff; }
+.btn.ghost { background: var(--buff); color: var(--ink); }
+.btn.sm { width: auto; padding: 9px 14px; font-size: 14px; border-radius: 11px; }
+.btn.nudge { background: var(--orange); color: #fff; }
+.btnrow { display: flex; gap: 10px; margin-top: 12px; }
+.btnrow .btn { flex: 1; }
+
+/* ---------- charge list inside You card ---------- */
+.charge {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 0; border-top: 1px dashed var(--line); font-size: 15px;
+}
+.charge .ic { font-size: 20px; }
+.charge .nm { flex: 1; }
+.charge .amt { font-weight: 800; }
+.charge.paid { opacity: .55; }
+.charge.overdue .nm { color: var(--red); font-weight: 700; }
+
+/* ---------- login ---------- */
+.gate {
+  min-height: 100dvh; display: grid; place-items: center; padding: 24px;
+  background: radial-gradient(120% 90% at 50% 0%, #fff 0%, var(--buff) 60%, var(--cream) 100%);
+}
+.gate .box { width: 100%; max-width: 360px; text-align: center; }
+.gate .mascot { font-size: 72px; animation: bob 2.4s ease-in-out infinite; }
+.gate h1 { font-size: 30px; margin: 6px 0 0; color: var(--red); font-weight: 900; letter-spacing: -.5px; }
+.gate p { color: var(--muted); margin: 4px 0 22px; }
+.field { text-align: left; margin-bottom: 14px; }
+.field label { display: block; font-size: 13px; font-weight: 700; color: var(--ink); margin: 0 4px 6px; }
+.field input, .field select, .field textarea {
+  width: 100%; padding: 13px 14px; border: 1.5px solid var(--line);
+  border-radius: 12px; background: #fff; color: var(--ink);
+}
+.field input:focus, .field select:focus, .field textarea:focus { outline: 2px solid var(--red); border-color: var(--red); }
+.err { color: var(--red); font-size: 14px; font-weight: 700; min-height: 20px; }
+.hint { color: var(--muted); font-size: 12px; margin-top: 12px; }
+
+/* ---------- who-are-you picker ---------- */
+.picker { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 8px; }
+.picktile {
+  background: #fff; border: 1.5px solid var(--line); border-radius: 16px;
+  padding: 16px 10px; text-align: center; font-weight: 700;
+}
+.picktile:active { transform: scale(.96); border-color: var(--red); }
+.picktile .em { font-size: 34px; display: block; }
+.picktile .rl { font-size: 11px; color: var(--muted); font-weight: 700; text-transform: uppercase; }
+
+/* ---------- emoji picker grid ---------- */
+.emojigrid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
+.emojigrid button {
+  font-size: 24px; padding: 8px 0; border-radius: 12px;
+  border: 1.5px solid var(--line); background: #fff;
+}
+.emojigrid button.sel { border-color: var(--red); background: var(--buff); }
+
+/* ---------- modal / sheet ---------- */
+.scrim { position: fixed; inset: 0; background: rgba(43,35,32,.45); z-index: 40; display: grid; align-items: end; }
+.sheet {
+  background: var(--cream); border-radius: 24px 24px 0 0;
+  padding: 20px 18px calc(24px + var(--safe)); width: 100%;
+  max-width: 620px; margin: 0 auto; max-height: 92dvh; overflow-y: auto;
+  animation: slideup .22s ease;
+}
+.sheet h3 { margin: 2px 0 14px; font-size: 20px; }
+.sheet .close { position: absolute; }
+.checkrow { display: flex; align-items: center; gap: 10px; padding: 10px 8px; border-bottom: 1px solid var(--line); }
+.checkrow input { width: 22px; height: 22px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  border: 1.5px solid var(--line); background: #fff; border-radius: 999px;
+  padding: 9px 14px; font-weight: 700; font-size: 15px;
+}
+.chip.sel { background: var(--red); color: #fff; border-color: var(--red); }
+
+/* ---------- misc ---------- */
+.empty { text-align: center; color: var(--muted); padding: 30px 10px; }
+.empty .em { font-size: 44px; }
+.fab {
+  position: fixed; right: max(16px, calc(50% - 310px + 16px)); bottom: calc(20px + var(--safe));
+  background: var(--red); color: #fff; border: 0; border-radius: 18px;
+  padding: 16px 20px; font-size: 16px; font-weight: 800; box-shadow: var(--shadow); z-index: 30;
+  display: inline-flex; gap: 8px; align-items: center;
+}
+.fab:active { transform: scale(.95); }
+.tiny { font-size: 12px; color: var(--muted); }
+.linkbtn { background: none; border: 0; color: var(--red); font-weight: 700; text-decoration: underline; padding: 6px; }
+
+/* ---------- animations ---------- */
+@keyframes bob { 0%,100%{ transform: translateY(0) } 50%{ transform: translateY(-10px) } }
+@keyframes slideup { from{ transform: translateY(30px); opacity: .4 } to{ transform: translateY(0); opacity: 1 } }
+@keyframes pop { 0%{ transform: scale(.8) } 60%{ transform: scale(1.08) } 100%{ transform: scale(1) } }
+@keyframes wobble { 0%,100%{ transform: rotate(0) } 25%{ transform: rotate(-2.5deg) } 75%{ transform: rotate(2.5deg) } }
+.card.overdue { animation: wobble 1.6s ease-in-out infinite; border-color: var(--red); }
+.paidflash { animation: pop .5s ease; }
+.overdue-banner {
+  background: #FBE1E1; color: var(--red); border-radius: 12px; padding: 10px 12px;
+  font-weight: 700; font-size: 14px; margin-top: 10px; text-align: center;
+}
+@media (prefers-reduced-motion: reduce) {
+  .card.overdue, .gate .mascot { animation: none; }
+}

@@ -12,6 +12,10 @@
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
   <link rel="icon" href="icons/icon-192.png" />
   <link rel="stylesheet" href="styles.css" />
+  <script>
+    // Register the service worker for offline support + update notifications
+    if ('serviceWorker' in navigator) { navigator.serviceWorker.register('sw.js'); }
+  </script>
 </head>
 <body>
   <!-- Login gate -->
@@ -37,7 +41,7 @@
     <div class="topbar">
       <span class="logo">🐿️</span>
       <h1 id="houseName">AGD House</h1>
-      <button class="iconbtn" id="switchBtn" title="Switch person">🔄</button>
+      <button class="iconbtn" id="switchBtn" title="Switch person">↩️</button>
       <button class="iconbtn hidden" id="settingsBtn" title="Settings">⚙️</button>
     </div>
     <div id="main"></div>
@@ -46,8 +50,45 @@
   <!-- Modal mount point -->
   <div id="modal"></div>
 
+  <!-- "App updated" banner (shown when a new version is ready) -->
+  <div id="update-banner">✨ SquirrelSplit was updated — tap to refresh 🐿️</div>
+
   <script src="confetti.js"></script>
   <script src="config.js"></script>
   <script src="app.js"></script>
+  <script>
+    // Surface a tap-to-install banner when a new version has downloaded.
+    // A new release is detected whenever sw.js's CACHE_NAME changes on deploy.
+    if ('serviceWorker' in navigator) {
+      var userRequestedUpdate = false;
+      navigator.serviceWorker.addEventListener('controllerchange', function () {
+        if (userRequestedUpdate) location.reload();
+      });
+      navigator.serviceWorker.ready.then(function (reg) {
+        var banner = document.getElementById('update-banner');
+        function offerUpdate(sw) {
+          banner.classList.add('show');
+          banner.onclick = function () {
+            userRequestedUpdate = true;
+            banner.classList.remove('show');
+            sw.postMessage('SKIP_WAITING');
+          };
+        }
+        if (reg.waiting) offerUpdate(reg.waiting);
+        reg.addEventListener('updatefound', function () {
+          var sw = reg.installing;
+          if (!sw) return;
+          sw.addEventListener('statechange', function () {
+            if (sw.state === 'installed' && navigator.serviceWorker.controller) offerUpdate(sw);
+          });
+        });
+        // Home-screen apps stay resident for days — re-check on each foreground.
+        document.addEventListener('visibilitychange', function () {
+          if (document.visibilityState === 'visible') reg.update().catch(function () {});
+        });
+        reg.update().catch(function () {});
+      });
+    }
+  </script>
 </body>
 </html>

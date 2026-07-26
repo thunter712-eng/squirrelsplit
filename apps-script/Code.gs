@@ -215,6 +215,9 @@ function ensureRentForMonth() {
   var cfg = readConfig();
   var rentUtilId = String(cfg.rentUtilityId || "");
   var period = ymOf(new Date());
+  var startMonth = String(cfg.rentStartMonth || period); // "YYYY-MM"; rent doesn't run before this
+  removePrestartRent(startMonth);      // clean up any rent auto-made for a month before the start
+  if (period < startMonth) return;     // rent hasn't started yet — make nothing
   var people = readObjects("People");
   var renters = people.filter(function (p) { return p.role === "roommate" && Number(p.rentAmount) > 0; });
   if (!renters.length) return;
@@ -259,6 +262,21 @@ function ensureRentForMonth() {
 
   if (changedC) overwrite("Charges", charges);
   if (changedS) overwrite("Shares", newShares);
+}
+
+// Delete rent auto-created for a month earlier than the configured start (only if unpaid).
+function removePrestartRent(startMonth) {
+  var charges = readObjects("Charges");
+  var shares = readObjects("Shares");
+  var kill = {};
+  charges.forEach(function (c) {
+    if (c.kind !== "rent" || !c.period || c.period >= startMonth) return;
+    var cs = shares.filter(function (s) { return s.chargeId === c.id; });
+    if (cs.every(function (s) { return s.status !== "paid"; })) kill[c.id] = 1; // keep paid history
+  });
+  if (!Object.keys(kill).length) return;
+  overwrite("Charges", charges.filter(function (c) { return !kill[c.id]; }));
+  overwrite("Shares", shares.filter(function (s) { return !kill[s.chargeId]; }));
 }
 
 function addCharge(charge) {

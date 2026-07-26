@@ -743,8 +743,10 @@
       '<div class="tiny" style="margin:-6px 4px 12px">Set this to your real due date so reminders land on time.</div>' +
       '<div class="field"><label>Days until a utility shows "overdue"</label><input name="overdueDays" type="number" min="1" max="90" value="' + esc(c.overdueDays || 10) + '"></div>' +
       '<div class="section-title" style="margin:18px 4px 6px">🏠 Rent</div>' +
+      '<div class="field"><label>Rent starts (month)</label><input name="rentStartMonth" type="month" value="' + esc(c.rentStartMonth || "") + '"></div>' +
+      '<div class="tiny" style="margin:-6px 4px 12px">No rent shows before this month (e.g. set 2026-08 if rent begins in August). Leave blank to start now.</div>' +
       '<div class="field"><label>Rent due day of month (1–28)</label><input name="rentDueDay" type="number" min="1" max="28" value="' + esc(c.rentDueDay || 1) + '"></div>' +
-      '<div class="tiny" style="margin:-6px 4px 12px">Rent auto-appears each month; it becomes "overdue" after this day. Set each person\'s rent amount in 👥 People.</div>' +
+      '<div class="tiny" style="margin:-6px 4px 12px">Once started, rent auto-appears each month and becomes "overdue" after this day. Set each person\'s rent amount in 👥 People.</div>' +
       '<div class="field"><label>Rent payment portal URL</label><input name="rentPortalUrl" type="url" value="' + esc(c.rentPortalUrl || "") + '"></div>' +
       '<div class="field"><label>How to pay rent (shown in the app)</label><textarea name="rentInstructions" rows="3">' + esc(c.rentInstructions || "") + "</textarea></div>" +
       '<div class="section-title" style="margin:18px 4px 6px">🔒 Admin lock</div>' +
@@ -762,6 +764,7 @@
         reminderDay: parseInt(this.reminderDay.value, 10) || 1,
         overdueDays: parseInt(this.overdueDays.value, 10) || 10,
         rentDueDay: parseInt(this.rentDueDay.value, 10) || 1,
+        rentStartMonth: this.rentStartMonth.value.trim(),
         rentPortalUrl: this.rentPortalUrl.value.trim(),
         rentInstructions: this.rentInstructions.value.trim(),
       };
@@ -940,6 +943,20 @@
   // demo mirror of the server's ensureRentForMonth (create/reconcile this month's per-person rent)
   function demoEnsureRent(db) {
     var period = new Date().toISOString().slice(0, 7); // YYYY-MM
+    var startMonth = String(db.config.rentStartMonth || period);
+    // remove any pre-start rent (unpaid) so nothing shows before rent begins
+    var killIds = {};
+    db.charges.forEach(function (c) {
+      if (c.kind === "rent" && c.period && c.period < startMonth) {
+        var cs = db.shares.filter(function (s) { return s.chargeId === c.id; });
+        if (cs.every(function (s) { return s.status !== "paid"; })) killIds[c.id] = 1;
+      }
+    });
+    if (Object.keys(killIds).length) {
+      db.charges = db.charges.filter(function (c) { return !killIds[c.id]; });
+      db.shares = db.shares.filter(function (s) { return !killIds[s.chargeId]; });
+    }
+    if (period < startMonth) return; // rent hasn't started yet
     var renters = db.people.filter(function (p) { return p.role === "roommate" && Number(p.rentAmount) > 0; });
     if (!renters.length) return;
     var dueDay = Math.min(Math.max(Number(db.config.rentDueDay) || 1, 1), 28);

@@ -1,7 +1,7 @@
 // SquirrelSplit service worker — network-first, with tap-to-update.
 // Bump CACHE_NAME on every deploy so home-screen apps get an "Update available" banner.
 
-const CACHE_NAME = 'squirrelsplit-v1';
+const CACHE_NAME = 'squirrelsplit-v2';
 const ASSETS = [
   './',
   './index.html',

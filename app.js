@@ -93,6 +93,17 @@
   }
   // safety net: never let a failed action fail silently
   window.addEventListener("unhandledrejection", function (e) { handleActionError(e.reason); });
+
+  // show a spinner + "working…" label on a button while an async action runs
+  async function withBusy(btn, label, fn) {
+    if (!btn) return fn();
+    var orig = btn.textContent;
+    btn.classList.add("busy"); btn.disabled = true; btn.textContent = label;
+    try { return await fn(); }
+    finally {
+      if (btn.isConnected) { btn.classList.remove("busy"); btn.disabled = false; btn.textContent = orig; }
+    }
+  }
   function uid() { return "id" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
   function daysBetween(iso) {
     var d = new Date(iso + "T00:00:00");
@@ -382,15 +393,50 @@
       '<button class="btn primary" style="margin-top:10px" data-act="ipaid" data-id="' + pid + '">' + markLabel + "</button></div>";
   }
 
+  // whole days from today until an ISO date (negative = past)
+  function daysUntil(iso) {
+    var d = new Date(iso + "T00:00:00"), t0 = new Date(todayISO() + "T00:00:00");
+    return Math.round((d - t0) / 86400000);
+  }
+  function fmtShortDate(iso) {
+    var m = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    var p = String(iso).split("-");
+    return p.length === 3 ? m[(+p[1]) - 1] + " " + (+p[2]) : iso;
+  }
+  // soonest due date among a person's unpaid rent shares
+  function rentDueInfo(pid) {
+    var dues = sharesOf(pid).filter(function (s) { return s.status === "unpaid" && isRentShare(s); })
+      .map(function (s) { var c = chargeById(s.chargeId); return c && c.dueDate ? c.dueDate : null; })
+      .filter(Boolean).sort();
+    if (!dues.length) return null;
+    var days = daysUntil(dues[0]);
+    return { due: dues[0], days: days, overdue: days < 0 };
+  }
+  // RentCafe app store link — App Store on iPhone, Play Store on Android
+  // (opens the app if installed → "Open", otherwise offers install)
+  function rentAppLink() {
+    var ua = navigator.userAgent || "";
+    if (/Android/i.test(ua)) return "https://play.google.com/store/apps/details?id=com.yardi.systems.rentcafe.resident";
+    return "https://apps.apple.com/us/app/rentcafe-resident/id541403633";
+  }
+
   // Rent section — paid at the 221 Armstrong RentCafe portal, NOT Venmo
   function rentSectionHTML(pid, amount) {
     if (amount <= 0.004) return "";
     var cfg = STATE.config;
     var url = cfg.rentPortalUrl || "";
     var steps = cfg.rentInstructions || "Log in, click Payments at the top of the screen, then select your name.";
-    return '<div class="rentblock"><div class="paylabel">🏠 Rent · ' + money(amount) + "</div>" +
+    var info = rentDueInfo(pid);
+    var dueLine = "";
+    if (info) {
+      if (info.overdue) dueLine = '<div class="rentdue late">⏰ Rent is ' + Math.abs(info.days) + " day" + (Math.abs(info.days) === 1 ? "" : "s") + " overdue</div>";
+      else if (info.days === 0) dueLine = '<div class="rentdue soon">⏰ Rent is due <b>today</b>! (' + fmtShortDate(info.due) + ")</div>";
+      else dueLine = '<div class="rentdue">⏰ Rent due in <b>' + info.days + " day" + (info.days === 1 ? "" : "s") + "</b> (by " + fmtShortDate(info.due) + ")</div>";
+    }
+    return '<div class="rentblock"><div class="paylabel">🏠 Rent · ' + money(amount) + "</div>" + dueLine +
       (url ? '<a class="btn rent" href="' + esc(url) + '" target="_blank" rel="noopener">🏠 Pay rent at 221 Armstrong ↗</a>' : "") +
-      '<div class="rentsteps">📱 Or use the <b>RentCafe Resident</b> app.<br>' + esc(steps) + "</div>" +
+      '<a class="btn ghost" style="margin-top:8px" href="' + esc(rentAppLink()) + '" target="_blank" rel="noopener">📲 Open the RentCafe app</a>' +
+      '<div class="rentsteps">' + esc(steps) + "</div>" +
       '<button class="btn ghost sm" style="width:100%;margin-top:8px" data-act="paidrent" data-id="' + pid + '">✓ I paid rent — mark it</button></div>';
   }
 
@@ -467,7 +513,7 @@
       e.preventDefault();
       var pin = this.pin.value;
       try {
-        var r = await api("checkAdminPin", { pin: pin });
+        var r = await withBusy(this.querySelector('button[type="submit"]'), "Checking…", function () { return api("checkAdminPin", { pin: pin }); });
         if (!r.ok) throw new Error("no");
         localStorage.setItem(K_ADMIN, pin);
         if (pendingId) localStorage.setItem(K_ME, pendingId);
@@ -578,16 +624,19 @@
     form.addEventListener("submit", async function (e) {
       e.preventDefault();
       if (!form.name.value.trim()) return;
+      var btn = form.querySelector('button[type="submit"]');
       if (selfMode) {
         // a person editing only their own safe fields — no admin PIN needed
-        await api("updateSelf", { person: {
-          id: form.id.value,
-          name: form.name.value.trim(),
-          venmoUsername: form.venmoUsername.value.trim().replace(/^@/, ""),
-          phone: form.phone.value.trim(),
-          email: form.email.value.trim(),
-          emoji: form.emoji.value,
-        }});
+        await withBusy(btn, "Saving…", function () {
+          return api("updateSelf", { person: {
+            id: form.id.value,
+            name: form.name.value.trim(),
+            venmoUsername: form.venmoUsername.value.trim().replace(/^@/, ""),
+            phone: form.phone.value.trim(),
+            email: form.email.value.trim(),
+            emoji: form.emoji.value,
+          }});
+        });
         closeSheet(); await refresh(); return;
       }
       var person = {
@@ -602,7 +651,7 @@
         isAdmin: form.isAdmin.checked,
         rentAmount: (form.role.value === "roommate" ? (parseFloat(form.rentAmount.value) || 0) : 0),
       };
-      await api("upsertPerson", { person: person });
+      await withBusy(btn, "Saving…", function () { return api("upsertPerson", { person: person }); });
       if (isBootstrap) localStorage.setItem(K_ME, person.id);
       closeSheet();
       await refresh();
@@ -730,7 +779,8 @@
       '<button class="btn primary" type="submit">Add</button></form>');
     $("#utilForm").addEventListener("submit", async function (e) {
       e.preventDefault();
-      await api("addUtility", { utility: { id: uid(), name: this.name.value.trim(), icon: this.icon.value.trim() || "🧾" } });
+      var u = { id: uid(), name: this.name.value.trim(), icon: this.icon.value.trim() || "🧾" };
+      await withBusy(this.querySelector('button[type="submit"]'), "Adding…", function () { return api("addUtility", { utility: u }); });
       closeSheet(); await refresh();
     });
   }
@@ -770,7 +820,7 @@
       };
       var newPin = this.adminPin.value.trim();
       if (newPin) cfg.adminPin = newPin; // only change the PIN when a new one is typed
-      await api("updateConfig", { config: cfg });
+      await withBusy(this.querySelector('button[type="submit"]'), "Saving…", function () { return api("updateConfig", { config: cfg }); });
       if (newPin) localStorage.setItem(K_ADMIN, newPin); // keep this device unlocked with the new PIN
       closeSheet(); await refresh();
     });
@@ -812,7 +862,7 @@
     if (act === "ipaid" || act === "paidrent" || act === "markpaid") {
       // ipaid = utilities (Venmo) only, paidrent = rent only, markpaid (admin) = everything
       var scope = act === "ipaid" ? "venmo" : (act === "paidrent" ? "rent" : undefined);
-      await api("markPaid", { personId: id, scope: scope });
+      await withBusy(t, "Saving…", function () { return api("markPaid", { personId: id, scope: scope }); });
       celebrate(t);
       await refresh();
       return;
@@ -870,11 +920,12 @@
     e.preventDefault();
     var pw = $("#pw").value;
     $("#loginErr").textContent = "";
+    var btn = this.querySelector('button[type="submit"]');
     try {
       PW = pw;
-      await api("login", {});
+      await withBusy(btn, "Checking… 🐿️", function () { return api("login", {}); });
       localStorage.setItem(K_PW, pw);
-      await refresh();
+      await withBusy(btn, "Loading… 🌰", function () { return refresh(); });
       showApp();
     } catch (err) {
       PW = "";
@@ -940,10 +991,10 @@
     });
     return charge.id;
   }
-  // demo mirror of the server's ensureRentForMonth (create/reconcile this month's per-person rent)
+  // demo mirror of the server's rent generator (per-person, 7 days before due, per month)
   function demoEnsureRent(db) {
-    var period = new Date().toISOString().slice(0, 7); // YYYY-MM
-    var startMonth = String(db.config.rentStartMonth || period);
+    var now = new Date();
+    var startMonth = String(db.config.rentStartMonth || now.toISOString().slice(0, 7));
     // remove any pre-start rent (unpaid) so nothing shows before rent begins
     var killIds = {};
     db.charges.forEach(function (c) {
@@ -956,10 +1007,19 @@
       db.charges = db.charges.filter(function (c) { return !killIds[c.id]; });
       db.shares = db.shares.filter(function (s) { return !killIds[s.chargeId]; });
     }
-    if (period < startMonth) return; // rent hasn't started yet
+    var dueDay = Math.min(Math.max(Number(db.config.rentDueDay) || 1, 1), 28);
+    var t0 = new Date(now.toISOString().slice(0, 10) + "T00:00:00");
+    var ym = function (d) { return d.toISOString().slice(0, 7); };
+    [ym(now), ym(new Date(now.getFullYear(), now.getMonth() + 1, 1))].forEach(function (M) {
+      if (M < startMonth) return;
+      var pad = dueDay < 10 ? "0" : "";
+      var due = new Date(M + "-" + pad + dueDay + "T00:00:00");
+      if (t0 >= new Date(due.getTime() - 7 * 86400000)) demoEnsureRentPeriod(db, M, dueDay);
+    });
+  }
+  function demoEnsureRentPeriod(db, period, dueDay) {
     var renters = db.people.filter(function (p) { return p.role === "roommate" && Number(p.rentAmount) > 0; });
     if (!renters.length) return;
-    var dueDay = Math.min(Math.max(Number(db.config.rentDueDay) || 1, 1), 28);
     var dueDate = period + "-" + (dueDay < 10 ? "0" : "") + dueDay;
     var rc = db.charges.find(function (c) { return c.kind === "rent" && c.period === period; });
     if (!rc) {

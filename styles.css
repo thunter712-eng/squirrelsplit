@@ -113,12 +113,22 @@ input, select { font-family: inherit; font-size: 16px; } /* 16px stops iOS zoom 
   border: 0; border-radius: 14px; padding: 14px 18px; font-size: 16px; font-weight: 800;
   width: 100%; text-decoration: none; text-align: center;
 }
-.btn:active { transform: scale(.97); }
+.btn:active { transform: scale(.96); filter: brightness(.85); }
 .btn.primary { background: var(--red); color: #fff; }
 .btn.venmo { background: #008CFF; color: #fff; }
 .btn.pay { background: var(--green); color: #fff; }
 .btn.ghost { background: var(--buff); color: var(--ink); }
 .btn.sm { width: auto; padding: 9px 14px; font-size: 14px; border-radius: 11px; }
+/* clear "you pressed it" feedback + "working…" spinner */
+.iconbtn:active, .picktile:active, .chip:active, .addphoto:active { filter: brightness(.85); }
+.linkbtn:active { opacity: .45; }
+.btn.busy, .btn:disabled { opacity: .85; pointer-events: none; }
+.btn.busy::before {
+  content: ""; display: inline-block; width: 15px; height: 15px; margin-right: 9px;
+  border: 2.5px solid currentColor; border-right-color: transparent; border-radius: 50%;
+  vertical-align: -2px; animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 .btn.nudge { background: var(--orange); color: #fff; }
 .btn.rent { background: var(--green); color: #fff; }
 .btnrow { display: flex; gap: 10px; margin-top: 12px; }
@@ -266,6 +276,12 @@ input, select { font-family: inherit; font-size: 16px; } /* 16px stops iOS zoom 
   font-size: 13px; color: #2a5c40; line-height: 1.5; margin-top: 8px;
   background: var(--green-soft); border-radius: 12px; padding: 10px 12px;
 }
+.rentdue {
+  font-size: 14px; font-weight: 800; text-align: center; margin: 4px 0 10px;
+  padding: 8px 12px; border-radius: 12px; background: #FFF3D6; color: #9a6a00;
+}
+.rentdue.soon { background: #FBE1E1; color: var(--red); }
+.rentdue.late { background: #FBE1E1; color: var(--red); }
 
 /* ---------- animations ---------- */
 @keyframes bob { 0%,100%{ transform: translateY(0) } 50%{ transform: translateY(-10px) } }

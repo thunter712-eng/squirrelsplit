@@ -209,22 +209,35 @@ function deleteReceipt(id) {
 function pad2(n) { return (n < 10 ? "0" : "") + n; }
 function ymOf(d) { return d.getFullYear() + "-" + pad2(d.getMonth() + 1); }
 
+var RENT_LEAD_DAYS = 7; // rent becomes visible this many days before its due date
+
 /* Rent is per-person (each roommate has their own rentAmount), auto-recurring monthly,
-   paid via the RentCafe portal — NOT split evenly and NOT paid by Venmo. */
+   paid via the RentCafe portal — NOT split evenly and NOT paid by Venmo.
+   Each month's rent appears 7 days before its due date and stays until paid. */
 function ensureRentForMonth() {
   var cfg = readConfig();
+  var now = new Date();
+  var startMonth = String(cfg.rentStartMonth || ymOf(now));
+  removePrestartRent(startMonth); // clean up any rent auto-made before the start month
+  var dueDay = Math.min(Math.max(Number(cfg.rentDueDay) || 1, 1), 28);
+  var t0 = new Date(now.toISOString().slice(0, 10) + "T00:00:00");
+  // consider this month and next month; create each once we're within the lead window of its due date
+  [ymOf(now), ymOf(new Date(now.getFullYear(), now.getMonth() + 1, 1))].forEach(function (M) {
+    if (M < startMonth) return;
+    var due = new Date(M + "-" + pad2(dueDay) + "T00:00:00");
+    var windowStart = new Date(due.getTime() - RENT_LEAD_DAYS * 86400000);
+    if (t0 >= windowStart) ensureRentPeriod(cfg, M, dueDay);
+  });
+}
+
+function ensureRentPeriod(cfg, period, dueDay) {
   var rentUtilId = String(cfg.rentUtilityId || "");
-  var period = ymOf(new Date());
-  var startMonth = String(cfg.rentStartMonth || period); // "YYYY-MM"; rent doesn't run before this
-  removePrestartRent(startMonth);      // clean up any rent auto-made for a month before the start
-  if (period < startMonth) return;     // rent hasn't started yet — make nothing
   var people = readObjects("People");
   var renters = people.filter(function (p) { return p.role === "roommate" && Number(p.rentAmount) > 0; });
   if (!renters.length) return;
 
   var charges = readObjects("Charges");
   var shares = readObjects("Shares");
-  var dueDay = Math.min(Math.max(Number(cfg.rentDueDay) || 1, 1), 28);
   var dueDate = period + "-" + pad2(dueDay);
 
   var rc = charges.filter(function (c) { return c.kind === "rent" && c.period === period; })[0];

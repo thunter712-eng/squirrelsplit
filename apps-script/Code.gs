@@ -475,7 +475,7 @@ function buildLauraAudit() {
     .setHorizontalAlignment("center");
   sh.getRange(2, 1, 1, COLS).merge().setValue(
     "How to use: check Venmo (for utilities) or RentCafe (for rent), then set “Confirmed?” to ✓ Yes or ✗ No on each row. " +
-    "Match flags problems 👉 🔴 = app says PAID but you did NOT see the money; 🟠 = you SAW the money but the app isn’t marked paid (go mark them paid in the app). " +
+    "Match flags 👉 🔴 = app says PAID but you did NOT see the money; 🟠 = you SAW the money but the app isn’t marked paid (go mark them paid); 🔔 = confirmed not paid yet — follow up; ✅ = paid & confirmed. " +
     "Shows this month + last month by default — use the Month ▾ filter to see older months. " +
     "Re-run 🐿️ SquirrelSplit ▸ Refresh Laura’s Audit anytime — your ✓/✗ and notes are kept."
   ).setWrap(true).setVerticalAlignment("middle").setFontColor("#5a5148");
@@ -501,7 +501,7 @@ function buildLauraAudit() {
         '$I' + r + '="","⏳ to check",' +
         '$I' + r + '="N/A","—",' +
         'AND($G' + r + '="Paid",$I' + r + '="✓ Yes"),"✅ paid & confirmed",' +
-        'AND($G' + r + '="Unpaid",$I' + r + '="✗ No"),"✅ agree: not paid",' +
+        'AND($G' + r + '="Unpaid",$I' + r + '="✗ No"),"🔔 still owed — follow up",' +
         'AND($G' + r + '="Paid",$I' + r + '="✗ No"),"🔴 marked paid, NOT seen",' +
         'AND($G' + r + '="Unpaid",$I' + r + '="✓ Yes"),"🟠 seen, not marked paid",' +
         'TRUE,"—")']);
@@ -510,14 +510,18 @@ function buildLauraAudit() {
 
     var confirmRule = SpreadsheetApp.newDataValidation()
       .requireValueInList(["✓ Yes", "✗ No", "N/A"], true).setAllowInvalid(false).build();
-    sh.getRange(start, 9, values.length, 1).setDataValidation(confirmRule);
+    var confirmCol = sh.getRange(start, 9, values.length, 1);
+    confirmCol.setDataValidation(confirmRule);
+    confirmCol.setBackground("#FFF8C4");    // light yellow — this is Laura's input column
+    sh.getRange(3, 9).setBackground("#FCE9A6"); // its header a touch deeper
 
     var mcol = sh.getRange(start, 11, values.length, 1);
     sh.setConditionalFormatRules([
-      SpreadsheetApp.newConditionalFormatRule().whenTextContains("🔴").setBackground("#F8C9C9").setRanges([mcol]).build(),
-      SpreadsheetApp.newConditionalFormatRule().whenTextContains("🟠").setBackground("#FCE2C4").setRanges([mcol]).build(),
-      SpreadsheetApp.newConditionalFormatRule().whenTextContains("✅").setBackground("#D7EEDD").setRanges([mcol]).build(),
-      SpreadsheetApp.newConditionalFormatRule().whenTextContains("⏳").setBackground("#FBF2CF").setRanges([mcol]).build(),
+      SpreadsheetApp.newConditionalFormatRule().whenTextContains("🔴").setBackground("#F8C9C9").setRanges([mcol]).build(), // marked paid, not seen
+      SpreadsheetApp.newConditionalFormatRule().whenTextContains("🟠").setBackground("#FCE2C4").setRanges([mcol]).build(), // seen, not marked
+      SpreadsheetApp.newConditionalFormatRule().whenTextContains("🔔").setBackground("#F7DE8B").setRanges([mcol]).build(), // still owed — follow up
+      SpreadsheetApp.newConditionalFormatRule().whenTextContains("✅").setBackground("#D7EEDD").setRanges([mcol]).build(), // paid & confirmed
+      SpreadsheetApp.newConditionalFormatRule().whenTextContains("⏳").setBackground("#E7EEF2").setRanges([mcol]).build(), // not checked yet
     ]);
 
     // Default view = current + previous month. Keep every row in the sheet (so no

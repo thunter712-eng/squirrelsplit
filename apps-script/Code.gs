@@ -428,6 +428,17 @@ function buildLauraAudit() {
   var admins = people.filter(function (p) { return p.isAdmin && p.venmoUsername; })
     .map(function (p) { return "@" + p.venmoUsername; }).join(" / ");
 
+  // Give each roommate her own light row color (Georgia → green, per request).
+  var GIRL_COLORS = ["#DDF0DD", "#DCEBF7", "#FADFE6", "#EAE0F5", "#FCE9D6", "#D9F0EC", "#E6ECD8", "#F3DEDA"];
+  var roommates = people.filter(function (p) { return p.role === "roommate"; });
+  roommates.sort(function (a, b) { // Georgia first so she takes the green slot
+    var ga = String(a.name).toLowerCase() === "georgia" ? 0 : 1;
+    var gb = String(b.name).toLowerCase() === "georgia" ? 0 : 1;
+    return ga - gb;
+  });
+  var colorByPerson = {};
+  roommates.forEach(function (p, i) { colorByPerson[String(p.id)] = GIRL_COLORS[i % GIRL_COLORS.length]; });
+
   // Preserve Laura's manual columns (Confirmed?, Date/amt seen, Notes) keyed by share id.
   var prior = {};
   var last = sh.getLastRow();
@@ -448,7 +459,7 @@ function buildLauraAudit() {
       key: String(s.id), periodRaw: period, month: monthLabel(period),
       bill: (u.icon || "") + " " + u.name,
       payVia: isRent ? "RentCafe portal" : ("Venmo " + admins),
-      person: person.name, amount: Number(s.amountOwed) || 0,
+      person: person.name, personId: String(s.personId), amount: Number(s.amountOwed) || 0,
       appStatus: s.status === "paid" ? "Paid" : "Unpaid",
       appPaidDate: s.paidDate || "",
       confirmed: pk.confirmed || "", seen: pk.seen || "", notes: pk.notes || "",
@@ -493,6 +504,15 @@ function buildLauraAudit() {
     });
     sh.getRange(start, 1, values.length, COLS).setValues(values);
     sh.getRange(start, 6, values.length, 1).setNumberFormat("$#,##0.00");
+
+    // each girl's rows get her light color (Confirmed col re-yellowed below;
+    // Match col's status colors come from conditional formatting on top)
+    var bgs = rows.map(function (r) {
+      var c = colorByPerson[r.personId] || "#FFFFFF";
+      var arr = []; for (var k = 0; k < COLS; k++) arr.push(c);
+      return arr;
+    });
+    sh.getRange(start, 1, values.length, COLS).setBackgrounds(bgs);
 
     var formulas = [];
     for (var i = 0; i < values.length; i++) {

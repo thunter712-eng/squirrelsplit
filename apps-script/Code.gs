@@ -85,6 +85,14 @@ function createDailyReminderTrigger() {
   ScriptApp.newTrigger("sendMonthlyReminders").timeBased().everyDays(1).atHour(9).create();
 }
 
+/* Adds a menu to the spreadsheet so Laura can refresh her audit with one click. */
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu("🐿️ SquirrelSplit")
+    .addItem("Refresh Laura's Audit", "buildLauraAudit")
+    .addToUi();
+}
+
 /* ---------------- web entrypoints ---------------- */
 function doGet(e) {
   if (e && e.parameter && e.parameter.action) return handle(e.parameter);
@@ -389,6 +397,133 @@ function sendMonthlyReminders() {
       "<p style='color:#8a7f72;font-size:12px;margin-top:18px'>Alpha Gamma Delta · Auburn 🦅 · sent by SquirrelSplit</p></div>";
     MailApp.sendEmail({ to: p.email, subject: "🐿️ " + cfg.houseName + ": $" + grand.toFixed(2) + " due this month", htmlBody: html });
   });
+}
+
+/* ---------------- Laura's Audit (reconcile app vs. real payments) ----------------
+   One row per person × bill × month. The app columns are auto-filled; Laura fills in
+   what she actually sees in Venmo (utilities) or RentCafe (rent), and the Match column
+   flags anything that disagrees. Rebuilding preserves her ✓/✗ and notes (keyed by share
+   id in the hidden first column). This tab is NOT managed by setup()/migrate(), so the
+   app never overwrites it. */
+var AUDIT_TAB = "Laura's Audit";
+var AUDIT_HEAD_ROWS = 3; // title, instructions, column headers
+
+function monthLabel(period) {
+  var p = String(period || "").split("-");
+  if (p.length < 2) return String(period || "");
+  var mm = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  return (mm[(+p[1]) - 1] || p[1]) + " " + p[0];
+}
+
+function buildLauraAudit() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = ss.getSheetByName(AUDIT_TAB) || ss.insertSheet(AUDIT_TAB);
+
+  var people = readObjects("People");
+  var utilities = readObjects("Utilities");
+  var charges = readObjects("Charges");
+  var shares = readObjects("Shares");
+  var cfg = readConfig();
+  var rentUtilId = String(cfg.rentUtilityId || "");
+  var admins = people.filter(function (p) { return p.isAdmin && p.venmoUsername; })
+    .map(function (p) { return "@" + p.venmoUsername; }).join(" / ");
+
+  // Preserve Laura's manual columns (Confirmed?, Date/amt seen, Notes) keyed by share id.
+  var prior = {};
+  var last = sh.getLastRow();
+  if (last > AUDIT_HEAD_ROWS) {
+    sh.getRange(AUDIT_HEAD_ROWS + 1, 1, last - AUDIT_HEAD_ROWS, 12).getValues().forEach(function (r) {
+      if (r[0]) prior[String(r[0])] = { confirmed: r[8], seen: r[9], notes: r[11] };
+    });
+  }
+
+  var rows = shares.map(function (s) {
+    var c = byId(charges, s.chargeId); if (!c) return null;
+    var u = byId(utilities, c.utilityId) || { name: "Bill", icon: "🧾" };
+    var person = byId(people, s.personId) || { name: "(unknown)" };
+    var isRent = c.kind === "rent" || String(c.utilityId) === rentUtilId;
+    var period = c.period || (c.dateAdded ? String(c.dateAdded).slice(0, 7) : "");
+    var pk = prior[String(s.id)] || {};
+    return {
+      key: String(s.id), periodRaw: period, month: monthLabel(period),
+      bill: (u.icon || "") + " " + u.name,
+      payVia: isRent ? "RentCafe portal" : ("Venmo " + admins),
+      person: person.name, amount: Number(s.amountOwed) || 0,
+      appStatus: s.status === "paid" ? "Paid" : "Unpaid",
+      appPaidDate: s.paidDate || "",
+      confirmed: pk.confirmed || "", seen: pk.seen || "", notes: pk.notes || "",
+    };
+  }).filter(Boolean);
+
+  // newest month first, then by person, then by bill
+  rows.sort(function (a, b) {
+    if (a.periodRaw !== b.periodRaw) return a.periodRaw < b.periodRaw ? 1 : -1;
+    if (a.person !== b.person) return a.person < b.person ? -1 : 1;
+    return a.bill < b.bill ? -1 : 1;
+  });
+
+  sh.clear();
+  var oldRules = sh.getConditionalFormatRules ? sh.getConditionalFormatRules() : [];
+  if (oldRules.length) sh.setConditionalFormatRules([]);
+  var COLS = 12;
+
+  sh.getRange(1, 1, 1, COLS).merge()
+    .setValue("🔎 Laura's Audit — does the app match the real money?")
+    .setFontSize(14).setFontWeight("bold").setBackground("#A6192E").setFontColor("#ffffff")
+    .setHorizontalAlignment("center");
+  sh.getRange(2, 1, 1, COLS).merge().setValue(
+    "How to use: check Venmo (for utilities) or RentCafe (for rent), then set “Confirmed?” to ✓ Yes or ✗ No on each row. " +
+    "Match flags problems 👉 🔴 = app says PAID but you did NOT see the money; 🟠 = you SAW the money but the app isn’t marked paid (go mark them paid in the app). " +
+    "Re-run 🐿️ SquirrelSplit ▸ Refresh Laura’s Audit anytime — your ✓/✗ and notes are kept."
+  ).setWrap(true).setVerticalAlignment("middle").setFontColor("#5a5148");
+  sh.setRowHeight(2, 54);
+
+  var head = ["_key", "Month", "Bill", "Pay via", "Person", "Amount",
+              "App status", "App paid date", "Confirmed? (you)", "Date / amount you saw", "Match", "Notes"];
+  sh.getRange(3, 1, 1, COLS).setValues([head]).setFontWeight("bold").setBackground("#F3E9D0");
+
+  var start = 4;
+  if (rows.length) {
+    var values = rows.map(function (r) {
+      return [r.key, r.month, r.bill, r.payVia, r.person, r.amount,
+              r.appStatus, r.appPaidDate, r.confirmed, r.seen, "", r.notes];
+    });
+    sh.getRange(start, 1, values.length, COLS).setValues(values);
+    sh.getRange(start, 6, values.length, 1).setNumberFormat("$#,##0.00");
+
+    var formulas = [];
+    for (var i = 0; i < values.length; i++) {
+      var r = start + i;
+      formulas.push(['=IFS(' +
+        '$I' + r + '="","⏳ to check",' +
+        '$I' + r + '="N/A","—",' +
+        'AND($G' + r + '="Paid",$I' + r + '="✓ Yes"),"✅ paid & confirmed",' +
+        'AND($G' + r + '="Unpaid",$I' + r + '="✗ No"),"✅ agree: not paid",' +
+        'AND($G' + r + '="Paid",$I' + r + '="✗ No"),"🔴 marked paid, NOT seen",' +
+        'AND($G' + r + '="Unpaid",$I' + r + '="✓ Yes"),"🟠 seen, not marked paid",' +
+        'TRUE,"—")']);
+    }
+    sh.getRange(start, 11, values.length, 1).setFormulas(formulas);
+
+    var confirmRule = SpreadsheetApp.newDataValidation()
+      .requireValueInList(["✓ Yes", "✗ No", "N/A"], true).setAllowInvalid(false).build();
+    sh.getRange(start, 9, values.length, 1).setDataValidation(confirmRule);
+
+    var mcol = sh.getRange(start, 11, values.length, 1);
+    sh.setConditionalFormatRules([
+      SpreadsheetApp.newConditionalFormatRule().whenTextContains("🔴").setBackground("#F8C9C9").setRanges([mcol]).build(),
+      SpreadsheetApp.newConditionalFormatRule().whenTextContains("🟠").setBackground("#FCE2C4").setRanges([mcol]).build(),
+      SpreadsheetApp.newConditionalFormatRule().whenTextContains("✅").setBackground("#D7EEDD").setRanges([mcol]).build(),
+      SpreadsheetApp.newConditionalFormatRule().whenTextContains("⏳").setBackground("#FBF2CF").setRanges([mcol]).build(),
+    ]);
+  }
+
+  sh.setFrozenRows(AUDIT_HEAD_ROWS);
+  sh.hideColumns(1); // _key (used only to preserve manual entries across refreshes)
+  var widths = [10, 78, 150, 165, 110, 90, 92, 108, 130, 165, 200, 220];
+  for (var c = 1; c <= COLS; c++) sh.setColumnWidth(c, widths[c - 1]);
+  ss.setActiveSheet(sh);
+  SpreadsheetApp.getActive().toast("Laura's Audit refreshed ✅ (" + rows.length + " rows)");
 }
 
 /* ---------------- sheet helpers ---------------- */

@@ -112,6 +112,26 @@ When the backend code changes (like the rent feature), after pasting the new `Co
 
 ---
 
+## 🔎 Laura's Audit tab (reconcile the app vs. real payments)
+
+A backend tool for verifying that what the app says matches the actual money.
+
+- **Set it up:** paste the latest `Code.gs`, then **reload the spreadsheet**. A **🐿️ SquirrelSplit**
+  menu appears at the top → click **Refresh Laura's Audit** (authorize the first time). No web-app
+  redeploy needed — it's a spreadsheet menu.
+- **What you get:** a **"Laura's Audit"** tab with one row per **person × bill × month**, showing what
+  the app records (Paid / Unpaid, date, amount) and where to check (**Venmo** for utilities, **RentCafe**
+  for rent).
+- **How to use it:** check Venmo / RentCafe, then set **"Confirmed? (you)"** to ✓ Yes or ✗ No on each row.
+  The **Match** column flags problems automatically:
+  - 🔴 **marked paid, NOT seen** — the app says paid but you found no payment (investigate).
+  - 🟠 **seen, not marked paid** — you got the money but nobody tapped "paid" (go mark them paid in the app).
+  - ✅ agree · ⏳ to check.
+- **Re-run anytime** from the menu — your ✓/✗ and notes are **kept** (matched by a hidden key). The app
+  never overwrites this tab.
+
+---
+
 ## 🔧 Notes & FAQ
 
 - **Change the password anytime:** edit the value next to `password` on the **Config** tab of your Sheet.

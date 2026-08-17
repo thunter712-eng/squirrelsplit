@@ -565,7 +565,8 @@ function buildLauraAudit() {
 
   sh.setFrozenRows(AUDIT_HEAD_ROWS);
   sh.hideColumns(1); // _key (used only to preserve manual entries across refreshes)
-  sh.hideColumns(4); // "Pay via" — not needed in the view (kept so Match formula cols stay put)
+  sh.hideColumns(4);  // "Pay via" — not needed in the view (kept so Match formula cols stay put)
+  sh.hideColumns(10); // "Date / amount you saw" — not needed (kept so Match formula cols stay put)
   var widths = [10, 78, 150, 165, 110, 90, 92, 108, 130, 165, 200, 220];
   for (var c = 1; c <= COLS; c++) sh.setColumnWidth(c, widths[c - 1]);
   ss.setActiveSheet(sh);

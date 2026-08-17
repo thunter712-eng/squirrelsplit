@@ -462,6 +462,8 @@ function buildLauraAudit() {
     return a.bill < b.bill ? -1 : 1;
   });
 
+  var existingFilter = sh.getFilter();
+  if (existingFilter) existingFilter.remove(); // must clear before rebuilding
   sh.clear();
   var oldRules = sh.getConditionalFormatRules ? sh.getConditionalFormatRules() : [];
   if (oldRules.length) sh.setConditionalFormatRules([]);
@@ -474,9 +476,10 @@ function buildLauraAudit() {
   sh.getRange(2, 1, 1, COLS).merge().setValue(
     "How to use: check Venmo (for utilities) or RentCafe (for rent), then set “Confirmed?” to ✓ Yes or ✗ No on each row. " +
     "Match flags problems 👉 🔴 = app says PAID but you did NOT see the money; 🟠 = you SAW the money but the app isn’t marked paid (go mark them paid in the app). " +
+    "Shows this month + last month by default — use the Month ▾ filter to see older months. " +
     "Re-run 🐿️ SquirrelSplit ▸ Refresh Laura’s Audit anytime — your ✓/✗ and notes are kept."
   ).setWrap(true).setVerticalAlignment("middle").setFontColor("#5a5148");
-  sh.setRowHeight(2, 54);
+  sh.setRowHeight(2, 66);
 
   var head = ["_key", "Month", "Bill", "Pay via", "Person", "Amount",
               "App status", "App paid date", "Confirmed? (you)", "Date / amount you saw", "Match", "Notes"];
@@ -516,6 +519,24 @@ function buildLauraAudit() {
       SpreadsheetApp.newConditionalFormatRule().whenTextContains("✅").setBackground("#D7EEDD").setRanges([mcol]).build(),
       SpreadsheetApp.newConditionalFormatRule().whenTextContains("⏳").setBackground("#FBF2CF").setRanges([mcol]).build(),
     ]);
+
+    // Default view = current + previous month. Keep every row in the sheet (so no
+    // reconciliation history/notes are lost) but hide older months via a basic filter.
+    var now = new Date();
+    var keep = {};
+    keep[monthLabel(ymOf(now))] = 1;
+    keep[monthLabel(ymOf(new Date(now.getFullYear(), now.getMonth() - 1, 1)))] = 1;
+    var hideLabels = [];
+    var seenLabel = {};
+    rows.forEach(function (r) {
+      if (!keep[r.month] && !seenLabel[r.month]) { seenLabel[r.month] = 1; hideLabels.push(r.month); }
+    });
+    var filterRange = sh.getRange(3, 1, values.length + 1, COLS); // header row 3 + data
+    var filter = filterRange.createFilter();
+    if (hideLabels.length) {
+      var crit = SpreadsheetApp.newFilterCriteria().setHiddenValues(hideLabels).build();
+      filter.setColumnFilterCriteria(2, crit); // Month is column 2
+    }
   }
 
   sh.setFrozenRows(AUDIT_HEAD_ROWS);
